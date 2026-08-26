@@ -237,9 +237,22 @@ async function runDoc(f, corpId){
 
   try{
     dlog(`fetching content for "${f.name}" (id ${f.id})`);
-    const res = await bhGet(`file/ClientCorporation/${corpId}/${f.id}`);
+    /* Every other call in this card explicitly lists the fields it wants —
+       this one didn't, and on ClientCorporation that came back without
+       fileContent even though the call itself succeeded. Bullhorn's REST
+       API generally withholds a heavy field like file content unless it's
+       asked for by name, so that's the fix here. If this guess is wrong,
+       the diagnostics below (keys + raw JSON snippet) show exactly what
+       shape the response actually has, so the next run is the last one
+       needed to know for sure. */
+    const res = await bhGet(`file/ClientCorporation/${corpId}/${f.id}?fields=id,name,fileContent`);
     const payload = res.data || res;
-    if(!payload || !payload.fileContent) throw new Error('No fileContent in response');
+    if(!payload || !payload.fileContent){
+      const keys = payload && typeof payload==='object' ? Object.keys(payload).join(', ') : typeof payload;
+      const rawDump = (()=>{ try{ return JSON.stringify(payload).slice(0,400); }catch(_){ return String(payload); } })();
+      dlog(`${f.name}: no fileContent — keys returned: [${keys}]  raw: ${rawDump}`);
+      throw new Error(`No fileContent in response (keys returned: ${keys||'none'})`);
+    }
 
     const raw = b64ToBytes(payload.fileContent);
     const kind = fileKind(f);
