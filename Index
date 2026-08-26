@@ -1,1 +1,1075 @@
-# clientterms
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Forecast</title>
+
+<!--
+  Forecast card — Bullhorn AppBridge
+  ─────────────────────────────────────────────────────────────────────────
+  DESIGN RULE: this card sits on the Job Overview page, which already shows
+  job title, client, owner, contact, employment type, status, openings, date
+  added, AND the full stage bar (Shortlisted / Send Outs / Interview / …).
+  Nothing on this card may repeat any of that. The card earns its space by
+  showing only what the page cannot: what a fill looked like at this client,
+  the gap to it, and the historical odds from here.
+
+  post-robot loads the EXACT commit Bullhorn's own sample pinned via
+  cdn.rawgit.com/krakenjs/post-robot/7da06445 — proven to work against
+  Bullhorn's AppBridge listener, because it's the file that already was.
+  Correction to an earlier note in this file: rawgit.com the brand shut
+  down, but jsDelivr kept every existing cdn.rawgit.com URL alive as a
+  permanent redirect to cdn.jsdelivr.net/gh/... serving that same pinned
+  commit — so the old URL still worked. It was never actually dead; only
+  the sunset announcement was true, not the "URL no longer resolves" leap
+  made from it. The one real problem with the old URL was a redirect hop
+  through a legacy alias; this points at the jsDelivr address directly.
+  DO NOT swap this for a version-tagged npm release (e.g. post-robot@10,
+  or even @8.x) without testing against a real Bullhorn parent frame first.
+  post-robot rewrote its message serializer in v9.0.0 (Sep 2018) in a way
+  that breaks wire compatibility with pre-v9 listeners, and an npm release
+  is not guaranteed byte-identical to this pinned pre-release commit even
+  within the same major version. A mismatch here doesn't error — the
+  register() handshake just gets no reply and the card spins forever.
+  If registration ever stalls again, add ?debug=1 to the URL and read the
+  on-page log, or open devtools console (this card logs there too).
+  Self-host this file if you can, so nothing here depends on a public CDN.
+  Chart.js is no longer needed; the distribution is drawn in CSS.
+-->
+<script src="https://cdn.jsdelivr.net/gh/krakenjs/post-robot@7da06445/dist/post-robot.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --border:#e0e3e7; --soft:#eceff1; --wash:#f8f9fa;
+  --text:#202124; --text2:#3c4043; --muted:#5f6368; --muted2:#80868b;
+  --blue:#1a73e8; --blue-d:#1967d2; --blue-s:#e8f0fe; --blue-l:#aecbfa;
+  --green:#137333; --green-s:#e6f4ea; --green-l:#81c995;
+  --amber:#b06000; --amber-s:#fef7e0;
+  --red:#c5221f; --red-s:#fce8e6;
+}
+body{font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  background:#fff;color:var(--text);font-size:13px;line-height:1.45;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.hide{display:none!important}
+
+/* ── verdict strip ─────────────────────────────────────────── */
+.strip{display:flex;align-items:center;gap:8px;padding:9px 14px;
+  border-bottom:1px solid var(--border);flex-wrap:wrap}
+.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.v-label{font-size:13px;font-weight:500}
+.v-reason{font-size:12.5px;color:var(--text2);min-width:0}
+.v-right{margin-left:auto;display:flex;gap:6px;align-items:center;flex:0 0 auto}
+.chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--wash);
+  color:var(--muted);border:1px solid var(--soft);white-space:nowrap}
+.s-green{background:linear-gradient(90deg,var(--green-s),#fff 60%)}
+.s-green .dot{background:#1e8e3e} .s-green .v-label{color:var(--green)}
+.s-amber{background:linear-gradient(90deg,var(--amber-s),#fff 60%)}
+.s-amber .dot{background:#f29900} .s-amber .v-label{color:var(--amber)}
+.s-red{background:linear-gradient(90deg,var(--red-s),#fff 60%)}
+.s-red .dot{background:#d93025} .s-red .v-label{color:var(--red)}
+
+/* ── action row ────────────────────────────────────────────── */
+.act{display:flex;gap:14px;padding:12px 14px;align-items:center;
+  border-bottom:1px solid var(--border)}
+.act-l{flex:1;min-width:0}
+.act-t{font-size:15.5px;font-weight:500;letter-spacing:-.01em;line-height:1.3}
+.act-d{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5}
+.odds{flex:0 0 auto;display:flex;align-items:center;gap:9px;
+  border-left:1px solid var(--soft);padding-left:14px}
+.odds-now,.odds-tgt{text-align:center;min-width:52px}
+.odds-n{font-size:23px;font-weight:300;line-height:1}
+.odds-now .odds-n{color:var(--text)}
+.odds-tgt .odds-n{color:var(--green)}
+.odds-c{font-size:10px;color:var(--muted2);margin-top:3px;white-space:nowrap}
+.odds-ar{color:var(--muted2);font-size:15px}
+.odds-note{font-size:10.5px;color:var(--muted2);max-width:132px;line-height:1.35}
+@media (max-width:640px){.act{flex-direction:column;align-items:stretch;gap:10px}
+  .odds{border-left:0;border-top:1px solid var(--soft);padding:10px 0 0}}
+
+/* ── two-up body ───────────────────────────────────────────── */
+.body{display:grid;grid-template-columns:1.05fr 1fr}
+@media (max-width:700px){.body{grid-template-columns:1fr}}
+.col{padding:11px 14px;min-width:0}
+.col + .col{border-left:1px solid var(--soft)}
+@media (max-width:700px){.col + .col{border-left:0;border-top:1px solid var(--soft)}}
+.col-hd{display:flex;justify-content:space-between;align-items:baseline;
+  gap:8px;margin-bottom:8px}
+.col-t{font-size:11px;font-weight:500;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.05em}
+.col-n{font-size:10.5px;color:var(--muted2)}
+
+/* ── gap list ──────────────────────────────────────────────── */
+.gap-row{display:flex;align-items:center;gap:8px;padding:4.5px 0}
+.mk{width:14px;height:14px;border-radius:50%;flex:0 0 auto;display:flex;
+  align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff}
+.mk svg{width:9px;height:9px;stroke:#fff;stroke-width:3;fill:none}
+.mk-ok{background:#1e8e3e}.mk-gap{background:#f29900}.mk-bad{background:#d93025}
+.gap-w{flex:1;min-width:0;font-size:12.5px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.gap-y{font-size:12px;flex:0 0 auto;color:var(--muted);white-space:nowrap}
+.gap-y b{font-weight:500;color:var(--text)}
+.gap-y.miss b{color:var(--red)}
+
+/* ── odds ladder ───────────────────────────────────────────── */
+.ld{display:flex;align-items:center;gap:7px;padding:3.5px 0}
+.ld-n{font-size:11.5px;width:74px;flex:0 0 auto;color:var(--text2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ld-b{flex:1;height:14px;background:var(--wash);border-radius:2px;overflow:hidden}
+.ld-f{display:block;height:100%;background:var(--blue-l);border-radius:2px}
+.ld-here .ld-f{background:var(--blue)}
+.ld-next .ld-f{background:var(--green-l)}
+.ld-here .ld-n{font-weight:500;color:var(--blue-d)}
+.ld-p{font-size:11px;width:70px;flex:0 0 auto;text-align:right;color:var(--muted2)}
+.ld-p b{color:var(--text);font-weight:500}
+
+/* ── time-to-fill range bar ────────────────────────────────── */
+.ttf{margin-top:12px;padding-top:10px;border-top:1px solid var(--soft)}
+.ttf-bar{position:relative;height:26px;margin:9px 0 4px}
+.ttf-track{position:absolute;top:9px;left:0;right:0;height:6px;
+  background:var(--wash);border-radius:3px}
+.ttf-iqr{position:absolute;top:9px;height:6px;background:var(--blue-l);border-radius:3px}
+.ttf-med{position:absolute;top:4px;width:2px;height:16px;background:var(--blue-d)}
+.ttf-you{position:absolute;top:1px;width:2px;height:22px;background:#d93025}
+.ttf-you::after{content:attr(data-l);position:absolute;top:-1px;left:5px;
+  font-size:10px;font-weight:500;color:#d93025;white-space:nowrap}
+.ttf-you.flip::after{left:auto;right:5px}
+.ttf-scale{display:flex;justify-content:space-between;font-size:10px;color:var(--muted2)}
+
+/* ── stalled chips ─────────────────────────────────────────── */
+.stalled{display:flex;align-items:center;gap:8px;padding:9px 14px;
+  border-top:1px solid var(--border);flex-wrap:wrap}
+.st-t{font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.05em;flex:0 0 auto}
+.st-c{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
+  padding:3px 9px;border-radius:999px;border:1px solid var(--soft);background:var(--wash)}
+.st-c b{font-weight:500}
+.st-c .d{font-weight:500}
+.st-c.hot{border-color:#f6c7c4;background:var(--red-s)} .st-c.hot .d{color:var(--red)}
+.st-c.warm{border-color:#f5deb0;background:var(--amber-s)} .st-c.warm .d{color:var(--amber)}
+.st-more{font-size:11px;color:var(--muted2)}
+
+/* ── flags ─────────────────────────────────────────────────── */
+.flags{border-top:1px solid var(--border)}
+.flag{display:flex;gap:9px;padding:8px 14px;border-top:1px solid var(--soft)}
+.flag:first-child{border-top:0}
+.flag-b{width:3px;border-radius:2px;flex:0 0 auto}
+.f-high .flag-b{background:#d93025}
+.f-med .flag-b{background:#f29900}
+.f-low .flag-b{background:var(--blue-l)}
+.flag-t{font-size:12px;font-weight:500}
+.flag-d{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.45}
+
+/* ── basis ─────────────────────────────────────────────────── */
+.basis{padding:8px 14px 11px;font-size:10.5px;color:var(--muted2);
+  line-height:1.5;border-top:1px solid var(--soft)}
+.demo{background:var(--amber-s);border-bottom:1px solid #f5deb0;color:var(--amber);
+  font-size:11px;padding:5px 14px;font-weight:500}
+
+/* ── states ────────────────────────────────────────────────── */
+.state{min-height:180px;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:9px;padding:24px;text-align:center}
+.state-t{font-size:14px;font-weight:500}
+.state-m{font-size:12px;color:var(--muted);max-width:330px;line-height:1.55}
+.spin{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--blue);
+  border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.btn{margin-top:2px;padding:6px 14px;border:1px solid var(--border);background:#fff;
+  color:var(--blue);font:inherit;font-size:12px;font-weight:500;border-radius:4px;cursor:pointer}
+.btn:hover{background:var(--blue-s)}
+
+/* ── debug panel (?debug=1) ──────────────────────────────────── */
+#dbg{position:fixed;left:0;right:0;bottom:0;max-height:45vh;overflow:auto;
+  background:#1a1a1a;color:#d7ffd7;font:11px/1.5 ui-monospace,Consolas,monospace;
+  padding:8px 10px;z-index:9999;border-top:2px solid #333}
+#dbg .hd{color:#8ab4f8;font-weight:700;margin-bottom:3px}
+#dbg .w{color:#f5a623}#dbg .e{color:#ff6b6b}
+</style>
+</head>
+<body>
+
+<div id="app" class="hide">
+  <div class="demo hide" id="demoBanner">Sample data — not connected to Bullhorn</div>
+
+  <!-- verdict -->
+  <div class="strip" id="strip">
+    <span class="dot"></span>
+    <span class="v-label" id="vLabel">—</span>
+    <span class="v-reason" id="vReason"></span>
+    <span class="v-right" id="vRight"></span>
+  </div>
+
+  <!-- the directive -->
+  <div class="act">
+    <div class="act-l">
+      <div class="act-t" id="aTitle">—</div>
+      <div class="act-d" id="aDetail"></div>
+    </div>
+    <div class="odds hide" id="oddsBox">
+      <div class="odds-now">
+        <div class="odds-n" id="oddsNow">—</div>
+        <div class="odds-c" id="oddsNowC"></div>
+      </div>
+      <div class="odds-ar" id="oddsArrow">→</div>
+      <div class="odds-tgt" id="oddsTgtWrap">
+        <div class="odds-n" id="oddsTgt">—</div>
+        <div class="odds-c" id="oddsTgtC"></div>
+      </div>
+      <div class="odds-note" id="oddsNote"></div>
+    </div>
+  </div>
+
+  <!-- gap + odds -->
+  <div class="body">
+    <div class="col">
+      <div class="col-hd">
+        <span class="col-t" id="gapTitle">What a fill looked like</span>
+        <span class="col-n" id="gapNote"></span>
+      </div>
+      <div id="gapBody"></div>
+    </div>
+    <div class="col">
+      <div class="col-hd">
+        <span class="col-t">Odds from each stage</span>
+        <span class="col-n" id="ldNote"></span>
+      </div>
+      <div id="ldBody"></div>
+      <div class="ttf hide" id="ttf">
+        <div class="col-hd" style="margin:0">
+          <span class="col-t">Time to fill</span>
+          <span class="col-n" id="ttfNote"></span>
+        </div>
+        <div class="ttf-bar" id="ttfBar"></div>
+        <div class="ttf-scale" id="ttfScale"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- stalled -->
+  <div class="stalled hide" id="stalled">
+    <span class="st-t">No movement</span>
+    <span id="stBody" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+  </div>
+
+  <!-- flags -->
+  <div class="flags hide" id="flags"></div>
+
+  <div class="basis" id="basis"></div>
+</div>
+
+<div class="state" id="stLoading">
+  <div class="spin"></div><div class="state-m" id="loadMsg">Loading…</div>
+</div>
+<div class="state hide" id="stNoConn">
+  <div class="state-t">Not connected to Bullhorn</div>
+  <div class="state-m">Open this card from a Job record. Add
+    <code>?demo=1</code> to preview the layout with sample data.</div>
+</div>
+<div class="state hide" id="stError">
+  <div class="state-t">Couldn't load this job</div>
+  <div class="state-m" id="errMsg"></div>
+  <button class="btn" onclick="init()">Try again</button>
+</div>
+
+<div id="dbg" class="hide"><div class="hd">Forecast debug — remove ?debug=1 to hide</div></div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════
+   DEBUG — visible with ?debug=1, always mirrored to console. This exists
+   because a broken register() handshake fails SILENTLY (no error, no
+   timeout — just an unresolved promise), so without this the only symptom
+   anyone can report is "it spins". Every lifecycle step logs a line.
+   ══════════════════════════════════════════════════════════════════════ */
+const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
+let dbgT0 = null;
+function dlog(msg, kind){
+  if(dbgT0==null) dbgT0 = (typeof performance!=='undefined') ? performance.now() : 0;
+  const t = (((typeof performance!=='undefined') ? performance.now() : 0) - dbgT0)/1000;
+  const line = `[+${t.toFixed(2)}s] ${msg}`;
+  (kind==='e' ? console.error : kind==='w' ? console.warn : console.log)('[Forecast]', msg);
+  if(DEBUG){
+    const box = document.getElementById('dbg');
+    if(box){
+      box.classList.remove('hide');
+      const row = document.createElement('div');
+      if(kind) row.className = kind;
+      row.textContent = line;
+      box.appendChild(row);
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+}
+window.addEventListener('error', e =>
+  dlog(`window error: ${e.message} (${e.filename}:${e.lineno})`, 'e'));
+
+/* ══════════════════════════════════════════════════════════════════════
+   CONFIG
+   ══════════════════════════════════════════════════════════════════════ */
+const CFG = {
+  MIN_COHORT:   6,     // below this: no benchmark at all
+  MIN_ODDS:     10,    // below this: no probabilities anywhere
+  MIN_BAND:     4,     // below this: a band shows n, not a %
+  COHORT_COUNT: 300,
+  SUB_PAGE:     50,
+  CACHE_TTL:    6*3600*1000,
+  FALLBACK_SWIMLANE:'cls20',
+  /* Benchmark on CVs that reached the client (Send Outs), not internal
+     shortlists. The old card counted every submission and called them
+     "CVs sent" — that is why its pace maths ran to -236. */
+  COUNT_SENDOUTS_ONLY: true,
+};
+
+/* Tenant-configurable statuses — an explicit map, not substring guesswork.
+   Anything unmatched is counted and surfaced rather than silently dropped. */
+const NEG   = ['reject','declin','withdraw','unsuccessful','not proceed',
+               'turned down','cancel','no longer','dropped','lost'];
+const PLACED= ['placed','placement'];
+const OFFER = ['offer'];
+const INTVW = ['interview','1st','2nd','3rd','final','meeting'];
+const SENT  = ['send out','sendout','sent','submit','presented','cv to client'];
+const SHORT = ['shortlist','internal','new lead','sourced'];
+
+/* ══════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ══════════════════════════════════════════════════════════════════════ */
+const DAY = 86400000;
+const now = () => Date.now();
+const dBetween = (a,b) => Math.round(Math.abs(a-b)/DAY);
+const dSince   = ts => Math.round((now()-ts)/DAY);
+const addDays  = (ts,n) => ts + n*DAY;
+const el  = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pct = (a,b) => b>0 ? Math.round(a/b*100) : null;
+const plural = (n,w) => `${n} ${w}${n===1?'':'s'}`;
+const clamp = (v,lo,hi) => Math.min(Math.max(v,lo),hi);
+const fmtDate = ts => new Date(ts).toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+const money = v => v==null||!isFinite(v) ? null
+  : '£'+Number(v).toLocaleString('en-GB',{maximumFractionDigits:0});
+
+function quantile(arr,q){
+  const s = arr.filter(n=>typeof n==='number'&&isFinite(n)).sort((a,b)=>a-b);
+  if(!s.length) return null;
+  const p=(s.length-1)*q, lo=Math.floor(p), r=p-lo;
+  return s[lo+1]!==undefined ? s[lo]+r*(s[lo+1]-s[lo]) : s[lo];
+}
+const median = a => quantile(a,0.5);
+
+/* ══════════════════════════════════════════════════════════════════════
+   LINKS
+   ══════════════════════════════════════════════════════════════════════ */
+function classicRoot(){
+  let lane = CFG.FALLBACK_SWIMLANE;
+  try{
+    const p = new URLSearchParams(location.search).get('swimlane');
+    if(p) lane = p;
+    else if(document.referrer){
+      const h = new URL(document.referrer).hostname;
+      if(/\.bullhornstaffing\.com$/.test(h)) lane = h.split('.')[0];
+    }
+  }catch(e){}
+  return `https://${lane}.bullhornstaffing.com/BullhornSTAFFING`;
+}
+const recUrl = (e,id) => `${classicRoot()}/OpenWindow.cfm?Entity=${e}&id=${id}`;
+
+/* ══════════════════════════════════════════════════════════════════════
+   TRANSPORT
+   ══════════════════════════════════════════════════════════════════════ */
+const getParam = k => new URLSearchParams(location.search).get(k);
+let regTries = 0;
+function register(){
+  regTries++;
+  dlog(`register() attempt ${regTries}/4 — postRobot is `
+    + `${typeof postRobot==='undefined' ? 'UNDEFINED (script failed to load or was blocked)' : 'loaded'}`);
+  if(typeof postRobot === 'undefined')
+    return fail('The AppBridge library failed to load — check that the '
+      + 'post-robot script URL is reachable from this network.');
+  dlog(`sending "register" to parent frame, window.top===window.self: ${window.top===window.self}`);
+  postRobot.sendToParent('register',{title:'Forecast'},{timeout:5000})
+    .then(evt=>{ dlog('register ACKED by parent — handshake succeeded'); boot(true,evt); })
+    .catch(err=>{
+      dlog(`register attempt ${regTries} got no ack: ${err && err.message}`, 'w');
+      regTries<4 ? setTimeout(register,500) : (dlog('giving up after 4 attempts — '
+        + 'parent frame never acknowledged. Likely a wire-protocol mismatch between '
+        + 'this post-robot build and whatever AppBridge is running, OR this page is '
+        + 'not actually embedded in a Bullhorn iframe.', 'e'), boot(false));
+    });
+}
+function unwrap(evt){
+  const p = evt && evt.data;
+  if(!p) throw new Error('Empty response from Bullhorn');
+  if(p.error) throw Object.assign(new Error('api'),{api:p.error});
+  return p.data;
+}
+const bhGet  = u      => { dlog(`GET ${u}`);
+  return postRobot.sendToParent('httpGET',{relativeURL:u},{timeout:25000}).then(unwrap); };
+const bhPost = (u,d)  => { dlog(`POST ${u}`);
+  return postRobot.sendToParent('httpPOST',{relativeURL:u,data:d},{timeout:25000}).then(unwrap); };
+
+/* ══════════════════════════════════════════════════════════════════════
+   FETCH
+   ══════════════════════════════════════════════════════════════════════ */
+const JOB_FIELDS = [
+  'id','title','dateAdded','numOpenings','clientBillRate',
+  'clientCorporation(id,name)','clientContact(id,firstName,lastName)',
+  `submissions[${CFG.SUB_PAGE}](id,dateAdded,dateLastModified,status,`
+    + 'candidate(id,firstName,lastName))',
+  'placements[20](id,dateAdded,clientBillRate)',
+].join(',');
+
+/* isOpen:false gives filled AND unfilled in one search — which is what makes
+   base rates and an honest fill rate possible. */
+const COHORT_FIELDS = [
+  'id','dateAdded','numOpenings','clientBillRate',
+  `submissions[${CFG.SUB_PAGE}](dateAdded,status)`,
+  'placements[20](dateAdded,clientBillRate)',
+].join(',');
+
+const jobSearch = (query,fields,count) =>
+  bhPost('search/JobOrder',{query,fields,count,sort:'-dateAdded',start:0});
+
+const STOP = new Set(['the','and','for','with','a','an','of','to','in','on','at',
+  'senior','junior','lead','head','contract','permanent','temp','interim','uk',
+  'london','remote','hybrid','ltd','limited','new','role','job']);
+const titleTokens = t => String(t||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ')
+  .split(/\s+/).filter(w=>w.length>2 && !STOP.has(w)).slice(0,3);
+
+async function fetchCohort(job){
+  const corp   = job.clientCorporation && job.clientCorporation.id;
+  const tokens = titleTokens(job.title);
+  const tokQ   = tokens.length ? `title:(${tokens.join(' AND ')})` : null;
+  const closed = 'isDeleted:false AND isOpen:false';
+  const name   = (job.clientCorporation && job.clientCorporation.name) || 'this client';
+
+  const tiers = [];
+  if(corp && tokQ) tiers.push({key:`c${corp}t${tokens.join('_')}`,
+    label:`${name} · roles like this`,
+    q:`clientCorporation.id:${corp} AND ${closed} AND ${tokQ}`});
+  if(corp) tiers.push({key:`c${corp}`, label:`${name} · all closed roles`,
+    q:`clientCorporation.id:${corp} AND ${closed}`});
+  if(tokQ) tiers.push({key:`t${tokens.join('_')}`,
+    label:'Similar roles · all clients', q:`${closed} AND ${tokQ}`});
+
+  let best = null;
+  for(const t of tiers){
+    const built = (await cachedSearch(t.key,t.q)).map(row).filter(Boolean);
+    if(!best || built.length > best.jobs.length)
+      best = {tier:t.label, jobs:built};
+    if(built.length >= CFG.MIN_COHORT) return best;
+  }
+  return best || {tier:'No comparable history', jobs:[]};
+}
+async function cachedSearch(key,q){
+  const ck = 'fc:'+key;
+  try{ const h = JSON.parse(sessionStorage.getItem(ck)||'null');
+    if(h && now()-h.t < CFG.CACHE_TTL) return h.d; }catch(e){}
+  const rows = (await jobSearch(q,COHORT_FIELDS,CFG.COHORT_COUNT)).data || [];
+  try{ sessionStorage.setItem(ck,JSON.stringify({t:now(),d:rows})); }catch(e){}
+  return rows;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   STATUS CLASSIFICATION
+   ══════════════════════════════════════════════════════════════════════ */
+/* rank = highest stage REACHED, so "Offer Declined" still counts as offer. */
+function classify(raw){
+  const s = String(raw||'').toLowerCase();
+  const has = L => L.some(t=>s.includes(t));
+  const negative = has(NEG);
+  let rank, known = true, sentOut = false;
+  if(has(PLACED) && !negative){ rank=4; sentOut=true; }
+  else if(has(OFFER))         { rank=3; sentOut=true; }
+  else if(has(INTVW))         { rank=2; sentOut=true; }
+  else if(has(SENT))          { rank=1; sentOut=true; }
+  else if(has(SHORT))         { rank=0; }
+  else                        { rank=0; known=false; }
+  return {raw, negative, rank, known, sentOut,
+    live: !negative && rank<4 && rank>0};
+}
+
+function row(j){
+  const subs  = (j.submissions && j.submissions.data)  || [];
+  const total = (j.submissions && j.submissions.total) || 0;
+  const placs = (j.placements  && j.placements.data)   || [];
+  const truncated = subs.length < total;   // degrade per metric, not per job
+  const filled = placs.length > 0;
+
+  const cls  = subs.map(s=>({...classify(s.status), t:s.dateAdded}));
+  const sent = cls.filter(c=>c.sentOut);
+  const sentSorted = sent.slice().sort((a,b)=>a.t-b.t);
+
+  let daysToFill = null, placRate = null;
+  if(filled){
+    const p = placs.slice().sort((a,b)=>a.dateAdded-b.dateAdded)[0];
+    daysToFill = Math.max(dBetween(j.dateAdded,p.dateAdded),1);
+    placRate   = p.clientBillRate != null ? p.clientBillRate : null;
+  }
+  return {
+    filled, daysToFill, placRate, truncated,
+    sentOuts: CFG.COUNT_SENDOUTS_ONLY ? sent.length : total,
+    shortlists: total,
+    daysToFirstSend: (!truncated && sentSorted[0])
+      ? dBetween(j.dateAdded, sentSorted[0].t) : null,
+    sendsBy14: !truncated
+      ? sentSorted.filter(c=>c.t - j.dateAdded < 14*DAY).length : null,
+    interviews: cls.filter(c=>c.rank>=2).length,
+    offers:     cls.filter(c=>c.rank>=3).length,
+    maxRank:    cls.length ? Math.max(...cls.map(c=>c.rank)) : 0,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   COHORT STATISTICS
+   ══════════════════════════════════════════════════════════════════════ */
+function stats(jobs){
+  const f = jobs.filter(j=>j.filled);
+  const sent = jobs.reduce((a,j)=>a+j.sentOuts,0);
+  const ints = jobs.reduce((a,j)=>a+j.interviews,0);
+  const offs = jobs.reduce((a,j)=>a+j.offers,0);
+  return {
+    n:jobs.length, nFilled:f.length, fillRate:pct(f.length,jobs.length),
+    fillMed:median(f.map(j=>j.daysToFill)),
+    fillP25:quantile(f.map(j=>j.daysToFill),0.25),
+    fillP75:quantile(f.map(j=>j.daysToFill),0.75),
+    times:  f.map(j=>j.daysToFill).filter(n=>n!=null),
+    sendMed:      median(f.map(j=>j.sentOuts)),
+    sendBy14Med:  median(f.map(j=>j.sendsBy14).filter(n=>n!=null)),
+    firstSendMed: median(f.map(j=>j.daysToFirstSend).filter(n=>n!=null)),
+    intMed:       median(f.map(j=>j.interviews)),
+    rateMed:      median(f.map(j=>j.placRate).filter(n=>n!=null)),
+    convSendInt: pct(ints,sent),
+    convIntOff:  pct(offs,ints),
+    convOffPlace:pct(f.length,offs),
+    truncShare: jobs.length
+      ? Math.round(jobs.filter(j=>j.truncated).length/jobs.length*100) : 0,
+  };
+}
+
+/* Base rates: of terminal jobs that got AT LEAST this far, how many filled?
+   Bands must be cumulative, not exclusive. Exclusive buckets are degenerate —
+   every filled job reached "placed" by definition, so the top bucket would sit
+   at 100% and every lower one at 0%. Cumulative gives the question a recruiter
+   actually asks: "we're at interview — how do roles that get here end up?" */
+function ladder(jobs){
+  const bands = [
+    {key:'any',name:'Any role',    test:()=>true},
+    {key:'cv', name:'CV sent',     test:j=>j.sentOuts>0},
+    {key:'int',name:'Interviewed', test:j=>j.interviews>0},
+    {key:'off',name:'Offer made',  test:j=>j.offers>0},
+  ];
+  return bands.map(b=>{
+    const set = jobs.filter(b.test), fl = set.filter(j=>j.filled).length;
+    return {...b, n:set.length, filled:fl,
+      pct: set.length>=CFG.MIN_BAND ? pct(fl,set.length) : null};
+  });
+}
+const bandKey = a => a.reachedOff>0 ? 'off'
+  : a.reachedInt>0 ? 'int' : a.sentOuts>0 ? 'cv' : 'any';
+
+/* ══════════════════════════════════════════════════════════════════════
+   ANALYSIS
+   ══════════════════════════════════════════════════════════════════════ */
+function analyse(job, cohort){
+  const s     = stats(cohort.jobs);
+  const subs  = (job.submissions && job.submissions.data) || [];
+  const placs = (job.placements  && job.placements.data)  || [];
+  const openings = Math.max(job.numOpenings||1,1);
+  const placedN  = placs.length;
+  const isFilled = placedN >= openings;
+
+  // the clock stops at the first placement — a placed job is not "601 days open"
+  const firstP  = placs.slice().sort((a,b)=>a.dateAdded-b.dateAdded)[0];
+  const daysOpen = Math.max(dBetween(job.dateAdded,
+    isFilled && firstP ? firstP.dateAdded : now()), 0);
+
+  const cls = subs.map(x=>({...classify(x.status), sub:x}));
+  const sentCls  = cls.filter(c=>c.sentOut);
+  const sentOuts = sentCls.length;
+  const shortlists = (job.submissions && job.submissions.total) || subs.length;
+  const maxRank  = cls.length ? Math.max(...cls.map(c=>c.rank)) : 0;
+  const reachedInt = cls.filter(c=>c.rank>=2).length;
+  const reachedOff = cls.filter(c=>c.rank>=3).length;
+  const unknown  = cls.filter(c=>!c.known);
+
+  const sentSorted = sentCls.slice().sort((a,b)=>a.sub.dateAdded-b.sub.dateAdded);
+  const daysToFirstSend = sentSorted[0]
+    ? dBetween(job.dateAdded, sentSorted[0].sub.dateAdded) : null;
+  const daysSinceLastSend = sentSorted.length
+    ? dSince(sentSorted[sentSorted.length-1].sub.dateAdded) : null;
+  const sendsBy14 = sentSorted
+    .filter(c=>c.sub.dateAdded - job.dateAdded < 14*DAY).length;
+
+  const live = cls.filter(c=>c.live).sort((a,b)=>
+    (a.sub.dateLastModified||a.sub.dateAdded)-(b.sub.dateLastModified||b.sub.dateAdded));
+
+  const haveBench = s.n >= CFG.MIN_COHORT && s.nFilled > 0;
+  const sendGap = (haveBench && s.sendMed!=null)
+    ? Math.max(Math.round(s.sendMed) - sentOuts, 0) : null;
+  const runway  = (haveBench && s.fillMed!=null)
+    ? Math.round(s.fillMed) - daysOpen : null;
+
+  const ld   = ladder(cohort.jobs);
+  const key  = bandKey({sentOuts, reachedInt, reachedOff});
+  const here = ld.find(b=>b.key===key);
+  const idx  = ld.findIndex(b=>b.key===key);
+  const next = ld.slice(idx+1).find(b=>b.pct!=null);
+  const oddsOk = s.n >= CFG.MIN_ODDS;
+
+  let proj = null;
+  if(!isFilled && haveBench && s.fillMed){
+    const m = s.fillMed;
+    const rem = reachedOff>0 ? Math.max(Math.round(m*0.15),3)
+      : reachedInt>0 ? Math.max(Math.round(m*0.40),7)
+      : sentOuts>0   ? Math.max(Math.round(m*0.75), Math.round(m)-daysOpen)
+      : Math.round(m);
+    proj = {from:addDays(now(),Math.round(rem*0.7)),
+            to:addDays(now(),Math.round(rem*1.4)),
+            basis: reachedOff>0 ? 'an offer already out'
+                 : reachedInt>0 ? 'candidates at interview'
+                 : sentOuts>0   ? 'CVs out, no interviews yet'
+                                : 'nothing out yet'};
+  }
+
+  let rateNote = null;
+  if(s.rateMed && job.clientBillRate){
+    const d = Math.round((job.clientBillRate - s.rateMed)/s.rateMed*100);
+    if(Math.abs(d)>=8) rateNote = {delta:d, theirs:s.rateMed, ours:job.clientBillRate};
+  }
+
+  // verdict
+  let rag='green', reason='on the path that filled these roles';
+  if(isFilled){
+    reason = s.fillMed!=null
+      ? `${daysOpen} days against a ${Math.round(s.fillMed)}-day median here`
+      : `filled in ${daysOpen} days`;
+  } else if(placedN>0){
+    rag='amber'; reason=`${openings-placedN} of ${openings} openings still live`;
+  } else if(sentOuts===0 && daysOpen>3){
+    rag='red'; reason=`nothing to the client after ${daysOpen} days`;
+  } else if(daysSinceLastSend!=null && daysSinceLastSend>10){
+    rag='red'; reason=`no CV to the client in ${daysSinceLastSend} days`;
+  } else if(runway!=null && runway<0){
+    rag='red'; reason=`${plural(Math.abs(runway),'day')} past the median fill time`;
+  } else if(sendGap && sendGap>=3){
+    rag='amber'; reason=`${sendGap} CVs short of what filled these roles`;
+  } else if(live.length && dSince(live[0].sub.dateLastModified
+            || live[0].sub.dateAdded) > 7){
+    rag='amber'; reason='candidates waiting on the client';
+  }
+
+  return {s, cohort, daysOpen, isFilled, placedN, openings, sentOuts, shortlists,
+    sendsBy14, daysToFirstSend, daysSinceLastSend, reachedInt, reachedOff,
+    maxRank, live, unknown, ld, here, next, oddsOk, key,
+    sendGap, runway, proj, rag, reason, rateNote, haveBench};
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   WHAT A FILL LOOKED LIKE  →  WHAT IT TAKES FROM HERE
+   ══════════════════════════════════════════════════════════════════════ */
+function gapRows(a){
+  const s = a.s, out = [];
+  const add = (what,you,ok) => out.push({what,you,
+    mk: ok===true?'ok' : ok===false?'bad' : 'gap'});
+
+  if(s.firstSendMed!=null)
+    add(`First CV out by day ${Math.round(s.firstSendMed)}`,
+      a.daysToFirstSend==null ? 'none' : `day ${a.daysToFirstSend}`,
+      a.daysToFirstSend!=null && a.daysToFirstSend <= s.firstSendMed+1);
+
+  if(s.sendBy14Med!=null)
+    add(`${Math.round(s.sendBy14Med)} CVs in the first fortnight`,
+      `${a.sendsBy14}`, a.sendsBy14 >= s.sendBy14Med);
+
+  if(s.sendMed!=null)
+    add(`${Math.round(s.sendMed)} CVs to the client`,
+      `${a.sentOuts}`, a.sentOuts >= s.sendMed);
+
+  if(s.intMed!=null && s.intMed>0)
+    add(`${Math.round(s.intMed)} at interview`,
+      `${a.reachedInt}`, a.reachedInt >= s.intMed);
+
+  if(s.convSendInt!=null && a.sentOuts>=3){
+    const mine = pct(a.reachedInt,a.sentOuts);
+    add(`${s.convSendInt}% of CVs reached interview`,
+      `${mine}%`, mine!=null && mine >= s.convSendInt*0.8);
+  }
+
+  if(s.rateMed!=null && money(s.rateMed))
+    add(`Placed at ${money(s.rateMed)}`,
+      a.rateNote ? money(a.rateNote.ours) : 'in line',
+      a.rateNote ? a.rateNote.delta >= 0 : true);
+
+  return out;
+}
+
+/** The one directive sentence, with a target and a historical consequence. */
+function directive(a, job){
+  const s = a.s;
+  if(a.isFilled) return {t:'Filled — nothing outstanding',
+    d: s.fillMed!=null
+      ? `Took ${plural(a.daysOpen,'day')} on ${plural(a.sentOuts,'CV')}, against a `
+        + `${Math.round(s.fillMed)}-day / ${Math.round(s.sendMed||0)}-CV median here.`
+      : `Took ${plural(a.daysOpen,'day')}.`};
+
+  if(a.placedN>0) return {
+    t:`${a.openings-a.placedN} of ${a.openings} openings still to fill`,
+    d:'The job reads as placed everywhere else — keep the pipeline warm for the rest.'};
+
+  if(a.haveBench && a.sendGap>0){
+    const by = addDays(now(), a.runway!=null && a.runway>0
+      ? clamp(a.runway,3,14) : 5);
+    const conv = s.convSendInt;
+    const ints = conv ? Math.max(Math.round(a.sendGap*conv/100),1) : null;
+    let d = `These filled on ${Math.round(s.sendMed)} CVs to the client; `
+      + `you're on ${a.sentOuts}.`;
+    if(ints) d += ` At the ${conv}% CV-to-interview rate here that's about `
+      + `${plural(ints,'more interview')}.`;
+    return {t:`Send ${plural(a.sendGap,'more CV')} by ${fmtDate(by)}`, d};
+  }
+
+  if(a.sentOuts===0) return {t:'Get the first CVs to the client',
+    d: s.firstSendMed!=null
+      ? `Roles that filled here had one out by day ${Math.round(s.firstSendMed)}; `
+        + `this is day ${a.daysOpen}.`
+      : 'Nothing has reached the client yet.'};
+
+  if(a.live.length){
+    const o = a.live[0];
+    const d = dSince(o.sub.dateLastModified || o.sub.dateAdded);
+    if(d>=5){
+      const c = o.sub.candidate;
+      const nm = c ? `${c.firstName||''} ${c.lastName||''}`.trim() : 'the oldest candidate';
+      const who = job.clientContact
+        ? `${job.clientContact.firstName||''} ${job.clientContact.lastName||''}`.trim()
+        : 'the client';
+      return {t:`Chase ${who} on ${nm}`,
+        d:`${plural(d,'day')} with no movement at "${o.raw}". `
+          + (a.here && a.here.pct!=null && a.oddsOk
+            ? `Roles that stalled here filled ${a.here.filled} of ${a.here.n} times.`
+            : 'Stalled submissions are the commonest cause of a lost role.')};
+    }
+  }
+
+  if(a.rateNote && a.rateNote.delta < -8) return {
+    t:`Rate is ${Math.abs(a.rateNote.delta)}% under what filled here`,
+    d:`Placements went out at a median ${money(a.rateNote.theirs)}; this is at `
+      + `${money(a.rateNote.ours)}. Worth a call before more sourcing.`};
+
+  return {t:'On the path that filled these roles',
+    d: a.proj ? `Comparable roles closed from here in `
+        + `${fmtDate(a.proj.from)}–${fmtDate(a.proj.to)}.`
+      : 'Keep the pipeline moving.'};
+}
+
+/** Max two, one per root cause, never an informational filler card. */
+function flags(a){
+  const s = a.s, out = [];
+  const push = (cause,p,t,d) => { if(!out.some(r=>r.cause===cause))
+    out.push({cause,p,t,d}); };
+
+  if(!a.isFilled){
+    /* The "no movement" chips already name these candidates and their days —
+       don't spend a second block of the card restating the count. */
+    const chipsShown = a.live.some(c=>dSince(c.sub.dateLastModified||c.sub.dateAdded)>=4);
+    const stalled = a.live.filter(c=>dSince(c.sub.dateLastModified||c.sub.dateAdded)>7);
+    if(stalled.length>1 && !chipsShown) push('client','high',
+      `${plural(stalled.length,'candidate')} with no client response for over a week`,
+      'One chase call usually restarts more of the pipeline than new sourcing.');
+
+    if(s.convSendInt!=null && a.sentOuts>=4){
+      const mine = pct(a.reachedInt,a.sentOuts);
+      if(mine!=null && mine < s.convSendInt*0.6) push('sourcing','high',
+        `CV-to-interview is ${mine}% against ${s.convSendInt}% here`,
+        'The shortlist is being rejected on paper — a brief or screening problem, '
+        + 'not a volume one. More of the same CVs will not fix it.');
+    }
+    if(a.daysSinceLastSend!=null && a.daysSinceLastSend>10) push('sourcing','high',
+      `No CV to the client in ${plural(a.daysSinceLastSend,'day')}`,
+      s.fillMed ? `Comparable roles filled in ${Math.round(s.fillMed)} days; `
+        + `this is day ${a.daysOpen}.` : 'The search has gone quiet.');
+
+    if(a.reachedInt>=2 && a.reachedOff===0) push('candidate','medium',
+      `${a.reachedInt} at interview, no offer`,
+      s.convIntOff!=null ? `This cohort converts ${s.convIntOff}% of interviews to `
+        + 'offer. Get structured feedback before sending more.'
+        : 'Get structured feedback before sending more.');
+
+    if(a.rateNote) push('commercial','medium',
+      `Rate sits ${a.rateNote.delta>0?'above':'below'} the filled median by `
+      + `${Math.abs(a.rateNote.delta)}%`,
+      `Placements here went out at ${money(a.rateNote.theirs)}; this is at `
+      + `${money(a.rateNote.ours)}.`);
+  }
+
+  if(a.unknown.length){
+    const names = [...new Set(a.unknown.map(u=>u.raw).filter(Boolean))].slice(0,3);
+    push('data','low',
+      `${plural(a.unknown.length,'submission')} with an unmapped status`,
+      `Not counted as sent to client: ${names.join(', ')}. `
+      + 'Add these to the status map so the numbers are right.');
+  }
+  const r = {high:0,medium:1,low:2};
+  return out.sort((x,y)=>r[x.p]-r[y.p]).slice(0,2);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   RENDER — nothing here may duplicate the Job Overview page
+   ══════════════════════════════════════════════════════════════════════ */
+function render(job, cohort, a){
+  const s = a.s;
+
+  // verdict
+  el('strip').className = 'strip s-'+a.rag;
+  el('vLabel').textContent = a.isFilled ? 'Filled'
+    : a.rag==='green' ? 'On track' : a.rag==='amber' ? 'Needs attention' : 'At risk';
+  el('vReason').textContent = '— '+a.reason;
+  el('vRight').innerHTML = `<span class="chip">${esc(cohort.tier)}</span>`
+    + `<span class="chip">${s.n} closed · ${s.nFilled} filled</span>`;
+
+  // directive
+  const d = directive(a, job);
+  el('aTitle').textContent = d.t;
+  el('aDetail').textContent = d.d || '';
+  renderOdds(a);
+
+  // gap
+  el('gapTitle').textContent = a.isFilled
+    ? 'How this one compared' : 'What a fill looked like';
+  el('gapNote').textContent = s.nFilled ? `median of ${s.nFilled}` : '';
+  const rows = a.haveBench ? gapRows(a) : [];
+  el('gapBody').innerHTML = rows.length ? rows.map(r=>`
+    <div class="gap-row">
+      <span class="mk mk-${r.mk}">${r.mk==='ok'
+        ? '<svg viewBox="0 0 12 12"><path d="M2 6.5l2.5 2.5L10 3"/></svg>'
+        : r.mk==='bad' ? '!' : '·'}</span>
+      <span class="gap-w">${esc(r.what)}</span>
+      <span class="gap-y ${r.mk!=='ok'?'miss':''}">this <b>${esc(r.you)}</b></span>
+    </div>`).join('')
+    : `<div style="font-size:12px;color:var(--muted);padding:4px 0">`
+      + `Only ${s.n} closed job${s.n===1?'':'s'} to compare against — `
+      + `${CFG.MIN_COHORT} needed before a benchmark is worth showing.</div>`;
+
+  renderLadder(a);
+  renderTTF(a);
+  renderStalled(a);
+
+  const fl = flags(a);
+  const fbox = el('flags');
+  if(fl.length){
+    fbox.classList.remove('hide');
+    fbox.innerHTML = fl.map(f=>`
+      <div class="flag f-${f.p==='high'?'high':f.p==='medium'?'med':'low'}">
+        <div class="flag-b"></div>
+        <div style="min-width:0"><div class="flag-t">${esc(f.t)}</div>
+        <div class="flag-d">${esc(f.d)}</div></div>
+      </div>`).join('');
+  } else fbox.classList.add('hide');
+
+  el('basis').innerHTML =
+    `Historical outcomes for that cohort, not a prediction for this role. `
+    + `CV counts are sends to the client, not internal shortlists.`
+    + (s.truncShare>20 ? ` ${s.truncShare}% of those jobs exceeded `
+        + `${CFG.SUB_PAGE} submissions, so their timings are read from totals.` : '')
+    + (s.n < CFG.MIN_ODDS ? ` Too few jobs to quote odds.` : '');
+
+  el('app').classList.remove('hide');
+  setState(null);
+}
+
+function renderOdds(a){
+  const box = el('oddsBox');
+  if(!a.oddsOk || !a.here || a.here.pct==null || a.isFilled)
+    return box.classList.add('hide');
+  box.classList.remove('hide');
+  el('oddsNow').textContent  = a.here.pct+'%';
+  el('oddsNowC').textContent = `now · ${a.here.n} jobs`;
+  const hasNext = a.next && a.next.pct!=null;
+  el('oddsArrow').classList.toggle('hide',!hasNext);
+  el('oddsTgtWrap').classList.toggle('hide',!hasNext);
+  if(hasNext){
+    el('oddsTgt').textContent  = a.next.pct+'%';
+    el('oddsTgtC').textContent = a.next.name.toLowerCase();
+  }
+  el('oddsNote').textContent = hasNext
+    ? `${a.here.filled} of ${a.here.n} filled from here; `
+      + `${a.next.filled} of ${a.next.n} from ${a.next.name.toLowerCase()}.`
+    : `${a.here.filled} of ${a.here.n} filled from here.`;
+}
+
+function renderLadder(a){
+  const max = Math.max(...a.ld.map(b=>b.pct||0),1);
+  el('ldNote').textContent = a.oddsOk ? 'share that filled' : 'too few to quote';
+  el('ldBody').innerHTML = a.ld.map(b=>{
+    const here = b.key===a.key, next = a.next && b.key===a.next.key;
+    const w = b.pct!=null ? Math.max(b.pct/max*100,2) : 0;
+    return `<div class="ld ${here?'ld-here':''} ${next?'ld-next':''}">
+      <span class="ld-n">${b.name}</span>
+      <span class="ld-b"><span class="ld-f" style="width:${w}%"></span></span>
+      <span class="ld-p">${b.pct!=null && a.oddsOk
+        ? `<b>${b.pct}%</b> of ${b.n}` : b.n ? `${b.n} job${b.n===1?'':'s'}` : '—'}</span>
+    </div>`;
+  }).join('');
+}
+
+/* Distribution as a range bar: p25–p75 band, median tick, this job's marker.
+   Replaces the 60-bar histogram — same information, a fifth of the height,
+   and no invisible single-point line datasets. */
+function renderTTF(a){
+  const s = a.s, box = el('ttf');
+  if(s.fillMed==null || !s.times.length) return box.classList.add('hide');
+  box.classList.remove('hide');
+  const hi = Math.max(s.fillP75!=null ? s.fillP75*1.35 : s.fillMed*2,
+                      a.daysOpen*1.08, s.fillMed*1.6, 14);
+  const x = v => clamp(v/hi*100, 0, 100);
+  const off = a.daysOpen > hi;
+  const youX = x(a.daysOpen);
+  el('ttfNote').textContent =
+    `${Math.round(s.fillP25)}–${Math.round(s.fillP75)} days · median ${Math.round(s.fillMed)}`;
+  el('ttfBar').innerHTML =
+    `<div class="ttf-track"></div>`
+    + `<div class="ttf-iqr" style="left:${x(s.fillP25)}%;`
+      + `width:${Math.max(x(s.fillP75)-x(s.fillP25),1.5)}%"></div>`
+    + `<div class="ttf-med" style="left:${x(s.fillMed)}%"></div>`
+    + `<div class="ttf-you${youX>72?' flip':''}" style="left:${youX}%" `
+      + `data-l="${a.isFilled?'filled':'now'} ${a.daysOpen}d${off?' →':''}"></div>`;
+  el('ttfScale').innerHTML = `<span>0</span><span>${Math.round(hi)} days</span>`;
+}
+
+function renderStalled(a){
+  const box = el('stalled');
+  const rows = a.live.filter(c=>dSince(c.sub.dateLastModified||c.sub.dateAdded)>=4);
+  if(!rows.length || a.isFilled) return box.classList.add('hide');
+  box.classList.remove('hide');
+  const show = rows.slice(0,4);
+  el('stBody').innerHTML = show.map(r=>{
+    const c = r.sub.candidate;
+    const nm = c ? `${c.firstName||''} ${c.lastName||''}`.trim() : 'Unnamed';
+    const d  = dSince(r.sub.dateLastModified||r.sub.dateAdded);
+    const k  = d>10 ? 'hot' : d>6 ? 'warm' : '';
+    const inner = `<b>${esc(nm)}</b> <span style="color:var(--muted2)">`
+      + `${esc(r.raw||'—')}</span> <span class="d">${d}d</span>`;
+    return c ? `<a class="st-c ${k}" href="${recUrl('Candidate',c.id)}" `
+        + `target="_blank" rel="noopener" style="color:inherit">${inner}</a>`
+      : `<span class="st-c ${k}">${inner}</span>`;
+  }).join('') + (rows.length>show.length
+    ? `<span class="st-more">+${rows.length-show.length} more</span>` : '');
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   STATES / BOOT
+   ══════════════════════════════════════════════════════════════════════ */
+function setState(id){
+  if(id !== 'stLoading') clearTimeout(watchdog);
+  ['stLoading','stNoConn','stError'].forEach(s=>el(s).classList.add('hide'));
+  if(id) el(id).classList.remove('hide');
+}
+function fail(msg){ el('app').classList.add('hide'); setState('stError');
+  el('errMsg').textContent = msg; }
+function humanError(err){
+  const raw = err && err.api ? err.api : err;
+  const t = (raw && (raw.errorMessage||raw.message)) || String(raw||'');
+  if(/401|unauthor|invalid.*token|session/i.test(t))
+    return 'Your Bullhorn session has expired. Refresh and sign in again.';
+  if(/403|entitle|permission/i.test(t))
+    return 'This login cannot read job or submission data.';
+  if(/timeout|timed out/i.test(t))
+    return 'Bullhorn took too long — this client may have a lot of history. Try again.';
+  if(/404|not found/i.test(t)) return 'That job record could not be found.';
+  return t.slice(0,200) || 'Unexpected error talking to Bullhorn.';
+}
+
+async function boot(registered){
+  if(getParam('demo')==='1') return runDemo();
+  const id = parseInt(getParam('EntityID'),10);
+  dlog(`boot(registered=${registered}) — EntityID param = `
+    + `${JSON.stringify(getParam('EntityID'))}, query = "${location.search}"`);
+  if(!registered){
+    dlog('parent never acknowledged registration — showing "not connected"', 'w');
+    el('app').classList.add('hide'); return setState('stNoConn');
+  }
+  if(!id){
+    dlog('registered OK but no EntityID in the URL — Bullhorn should append this '
+      + 'when it loads a card on a Job record; check how the card URL is configured', 'w');
+    el('app').classList.add('hide'); return setState('stNoConn');
+  }
+  try{
+    el('loadMsg').textContent = 'Loading job…';
+    dlog(`fetching entity/JobOrder/${id}`);
+    const res = await bhGet(`entity/JobOrder/${id}?fields=${JOB_FIELDS}&meta=off`);
+    const job = res.data || res;
+    if(!job || !job.id) throw new Error('Job not found');
+    dlog(`job loaded: "${job.title}" — ${(job.submissions&&job.submissions.total)||0} submissions`);
+    el('loadMsg').textContent = 'Reading closed jobs for this client…';
+    const cohort = await fetchCohort(job);
+    dlog(`cohort resolved: ${cohort.jobs.length} jobs — "${cohort.tier}"`);
+    render(job, cohort, analyse(job, cohort));
+    dlog('render complete');
+  }catch(err){ dlog(`boot failed: ${err && err.message}`, 'e'); fail(humanError(err)); }
+}
+let watchdog = null;
+function init(){
+  el('app').classList.add('hide'); setState('stLoading'); regTries = 0;
+  dlog(`init() — location = ${location.href}, in an iframe: ${window.top!==window.self}`);
+  clearTimeout(watchdog);
+  if(getParam('demo')==='1') { dlog('demo=1 — skipping AppBridge entirely'); return runDemo(); }
+  /* Opened outside Bullhorn there is no parent frame, so the post-robot
+     handshake can hang rather than reject. Never leave the user on a
+     spinner — say what happened and how to preview. */
+  watchdog = setTimeout(()=>{
+    if(!el('stLoading').classList.contains('hide')){
+      dlog('watchdog fired at 24s — still on the loading spinner, forcing "not connected"', 'e');
+      el('app').classList.add('hide');
+      setState('stNoConn');
+    }
+  }, 24000);
+  register();
+}
+
+/* ── demo mode ─────────────────────────────────────────────────────── */
+function runDemo(){
+  el('demoBanner').classList.remove('hide');
+  const t0 = now() - 34*DAY;
+  const mk = (d,st,fn,ln,id)=>({id,dateAdded:t0+d*DAY,
+    dateLastModified:t0+(d+2)*DAY,status:st,
+    candidate:{id,firstName:fn,lastName:ln}});
+  const job = {
+    id:157004, title:'Technical Project Manager', dateAdded:t0, numOpenings:1,
+    clientBillRate:450, clientCorporation:{id:9,name:'St John Ambulance'},
+    clientContact:{id:5,firstName:'Joanne',lastName:'Shone'},
+    submissions:{total:9,data:[
+      mk(6,'Send Out','Priya','Raman',101),
+      mk(9,'Client Declined','Tom','Hale',102),
+      mk(11,'Interview','Sarah','Chen',103),
+      mk(13,'Send Out','Dan','Okafor',104),
+      mk(15,'Rejected','Amy','Wu',105),
+      mk(18,'Send Out','Joe','Reid',106),
+      mk(21,'2nd Interview','Nina','Patel',107),
+      mk(24,'Shortlisted','Sam','Ellis',108),
+      mk(27,'Send Out','Kai','Mensah',109)]},
+    placements:{total:0,data:[]},
+  };
+  const jobs = [];
+  [18,22,25,28,31,33,36,40,44,52,61].forEach((d,i)=>jobs.push({filled:true,
+    daysToFill:d, placRate:470+i*6, truncated:false, sentOuts:9+(i%6),
+    shortlists:24+i, daysToFirstSend:2+(i%4), sendsBy14:5+(i%3),
+    interviews:2+(i%3), offers:1, maxRank:4}));
+  for(let i=0;i<15;i++) jobs.push({filled:false, daysToFill:null, placRate:null,
+    truncated:false, sentOuts:[0,2,3,5,7,9][i%6], shortlists:12,
+    daysToFirstSend:3, sendsBy14:2, interviews:i%3, offers:i%5===0?1:0,
+    maxRank:[0,1,2,2,3,1][i%6]});
+  render(job, {tier:'St John Ambulance · roles like this', jobs},
+    analyse(job, {tier:'St John Ambulance · roles like this', jobs}));
+}
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
