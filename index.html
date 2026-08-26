@@ -3,27 +3,40 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ClientCorp Files — probe</title>
+<title>ClientCorp Terms — read test</title>
 
 <!--
-  DIAGNOSTIC CARD, not a deliverable. Purpose: find out whether — and how —
-  file attachments on a ClientCorporation record can be read via AppBridge
-  at all, before building anything that depends on it.
+  DIAGNOSTIC CARD, stage 2. Stage 1 (clientterms probe) already established
+  the real read path on this tenant: entity/ClientCorporation/{id}/
+  fileAttachments returns real rows even though it isn't in Bullhorn's
+  public entity reference. This stage answers the one question that
+  decides everything downstream: do these PDFs have a real text layer,
+  or are they scanned images?
 
-  Why this needs testing rather than trusting the docs: the public REST API
-  reference does not list a fileAttachments association on ClientCorporation
-  (unlike Candidate and JobOrder, which do). The FILES tab visible on a real
-  ClientCorporation record proves attachments exist there somehow — so this
-  tries every plausible read path and reports, per path, exactly what came
-  back: success + row count, an empty result, or the literal error. No path
-  is assumed to work. No content is parsed or summarised here — that comes
-  after this establishes which path is real.
+  If extraction yields substantial real text → client-side text extraction
+  is viable, and the next build step is sending that text to a parsing
+  service (never an AI key in this card — see the T&C conversation this
+  card came out of). If extraction yields near-nothing → these are scans,
+  OCR is required, and that only happens server-side. Either answer is a
+  real, useful answer. Nothing here summarises or interprets the terms —
+  it only proves whether the words are reachable at all.
 
-  Same post-robot pin as the forecast card, and for the same reason: it is
-  the exact build Bullhorn's AppBridge listener was written against, not a
-  guessed version. See the comment in forecast-card.html for the story.
+  Handles three formats now: PDF (pdf.js, text-layer-vs-scan check), .docx
+  (mammoth.js — a zip of XML, essentially always extractable, no OCR risk),
+  and legacy binary .doc (pre-2007 format — explicitly reported as
+  unsupported client-side rather than silently failing or being misread
+  as a "scan", since that's a different problem needing a different fix
+  — a format conversion, not OCR).
+
+  pdf.js and mammoth.js both loaded from cdnjs, same reasoning as the
+  post-robot pin: this card only exists to answer one factual question, so
+  it uses whatever currently-published build does the job — no legacy wire
+  protocol is involved here, so no reason to pin an old commit the way
+  post-robot needed to.
 -->
 <script src="https://cdn.jsdelivr.net/gh/krakenjs/post-robot@7da06445/dist/post-robot.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
@@ -40,31 +53,26 @@ body{font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-s
 .pill{font-size:11px;padding:2px 9px;border-radius:999px;background:#fef7e0;color:#b06000;
   border:1px solid #f5deb0;font-weight:500;white-space:nowrap}
 .wrap{padding:12px 14px}
-.probe{border:1px solid #e0e3e7;border-radius:8px;margin-bottom:10px;overflow:hidden}
-.probe-hd{display:flex;align-items:center;gap:9px;padding:9px 12px;background:#f8f9fa;
+.doc{border:1px solid #e0e3e7;border-radius:8px;margin-bottom:10px;overflow:hidden}
+.doc-hd{display:flex;align-items:center;gap:9px;padding:9px 12px;background:#f8f9fa;
   border-bottom:1px solid #eceff1}
 .stat{width:18px;height:18px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;
   justify-content:center;font-size:11px;font-weight:700;color:#fff}
 .stat.pending{background:#dadce0;color:#5f6368}
 .stat.ok{background:#1e8e3e}
-.stat.empty{background:#f29900}
+.stat.warn{background:#f29900}
 .stat.fail{background:#d93025}
-.probe-name{font-size:12.5px;font-weight:500;flex:1;min-width:0}
-.probe-url{font-size:10.5px;color:#5f6368;font-family:ui-monospace,Consolas,monospace;
-  padding:8px 12px;border-bottom:1px solid #eceff1;word-break:break-all;background:#fff}
-.probe-result{padding:9px 12px;font-size:12px}
-.probe-result.fail{color:#c5221f}
-.probe-result.empty{color:#b06000}
-.rows{margin-top:6px;border:1px solid #eceff1;border-radius:6px;overflow:hidden}
-table{width:100%;border-collapse:collapse;font-size:11.5px}
-th{text-align:left;padding:6px 9px;background:#f8f9fa;color:#5f6368;font-weight:500;
-  border-bottom:1px solid #eceff1}
-td{padding:6px 9px;border-bottom:1px solid #f1f3f4}
-tr:last-child td{border-bottom:0}
-.raw{margin-top:6px}
-.raw summary{cursor:pointer;font-size:11px;color:#1a73e8}
-.raw pre{margin-top:6px;background:#f8f9fa;border:1px solid #eceff1;border-radius:6px;
-  padding:8px;font-size:10.5px;overflow:auto;max-height:220px;white-space:pre-wrap;word-break:break-all}
+.doc-name{font-size:12.5px;font-weight:500;flex:1;min-width:0;word-break:break-word}
+.doc-meta{font-size:10.5px;color:#5f6368;font-family:ui-monospace,Consolas,monospace;
+  padding:8px 12px;border-bottom:1px solid #eceff1;background:#fff}
+.doc-body{padding:9px 12px;font-size:12px}
+.doc-body.fail{color:#c5221f}
+.doc-body.warn{color:#b06000}
+.verdict{font-weight:700;margin-bottom:4px}
+.excerpt{margin-top:8px;background:#f8f9fa;border:1px solid #eceff1;border-radius:6px;
+  padding:9px;font-size:11.5px;line-height:1.6;max-height:180px;overflow:auto;white-space:pre-wrap}
+.excerpt-lbl{font-size:10px;color:#5f6368;text-transform:uppercase;letter-spacing:.05em;
+  font-weight:700;margin-bottom:4px}
 .summary{margin:14px 0 0;padding:12px;border:1px solid #e0e3e7;border-radius:8px;background:#f8f9fa}
 .summary h2{font-size:12.5px;margin-bottom:6px}
 .summary p{font-size:12px;color:#3c4043;line-height:1.6}
@@ -84,12 +92,12 @@ tr:last-child td{border-bottom:0}
 <div id="app" class="hide">
   <div class="hdr">
     <div>
-      <h1 id="hTitle">ClientCorporation file-read probe</h1>
+      <h1>Terms documents — text-layer read test</h1>
       <p id="hSub">—</p>
     </div>
     <span class="pill">Diagnostic — not for daily use</span>
   </div>
-  <div class="wrap" id="probes"></div>
+  <div class="wrap" id="docs"></div>
   <div class="wrap"><div class="summary" id="summary"></div></div>
   <div class="wrap"><div id="dbg"></div></div>
 </div>
@@ -106,36 +114,43 @@ tr:last-child td{border-bottom:0}
 
 <script>
 "use strict";
-const DAY = 86400000;
 const el = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const bytes = n => n==null ? '—' : n<1024 ? n+' B'
   : n<1048576 ? (n/1024).toFixed(1)+' KB' : (n/1048576).toFixed(1)+' MB';
 
-/* ── debug log, always visible on this diagnostic card ─────────────── */
+/* Only bother extracting from documents that look like the executed terms —
+   signed, not superseded drafts — and skip anything unreasonably large for
+   a browser-side base64 round trip. */
+const MAX_BYTES = 5_000_000;
+const looksLikeTerms = f => /terms|agreement|contract|msa|paye/i.test(f.name||'');
+const preferSigned   = fs => {
+  const signed = fs.filter(f=>/sign/i.test(f.name||''));
+  return signed.length ? signed : fs;
+};
+
 let t0 = null;
 function dlog(msg){
   if(t0==null) t0 = (typeof performance!=='undefined') ? performance.now() : 0;
   const t = (((typeof performance!=='undefined') ? performance.now() : 0) - t0)/1000;
-  console.log('[CorpFilesProbe]', msg);
+  console.log('[TermsReadTest]', msg);
   const box = el('dbg');
   if(box){ const row = document.createElement('div');
     row.textContent = `[+${t.toFixed(2)}s] ${msg}`; box.appendChild(row);
     box.scrollTop = box.scrollHeight; }
 }
 
-/* ── transport (same pattern/pin as forecast card) ──────────────────── */
 const getParam = k => new URLSearchParams(location.search).get(k);
 let regTries = 0, watchdog = null;
 function register(){
   regTries++;
   dlog(`register() attempt ${regTries}/4`);
   if(typeof postRobot === 'undefined')
-    return dlog('post-robot failed to load — check the script URL is reachable') || showNoConn();
-  postRobot.sendToParent('register',{title:'ClientCorp Files Probe'},{timeout:5000})
+    return dlog('post-robot failed to load') || showNoConn();
+  postRobot.sendToParent('register',{title:'Terms Read Test'},{timeout:5000})
     .then(()=>{ dlog('registered'); boot(); })
-    .catch(()=> regTries<4 ? setTimeout(register,500) : (dlog('gave up after 4 attempts','e'), showNoConn()));
+    .catch(()=> regTries<4 ? setTimeout(register,500) : (dlog('gave up after 4 attempts'), showNoConn()));
 }
 function unwrap(evt){
   const p = evt && evt.data;
@@ -144,96 +159,173 @@ function unwrap(evt){
   return p.data;
 }
 const bhGet = u => { dlog(`GET ${u}`);
-  return postRobot.sendToParent('httpGET',{relativeURL:u},{timeout:20000}).then(unwrap); };
-
+  return postRobot.sendToParent('httpGET',{relativeURL:u},{timeout:25000}).then(unwrap); };
 function showNoConn(){ el('app').classList.add('hide'); el('stLoading').classList.add('hide');
   el('stNoConn').classList.remove('hide'); }
 
-/* ── the probes ──────────────────────────────────────────────────────
-   Every plausible read path, tried independently so one failing doesn't
-   hide whether the others work. Nothing here assumes an answer. */
-function buildProbes(id){
-  return [
-    { key:'assoc-fileAttachments',
-      name:'Current REST association: entity/ClientCorporation/{id}/fileAttachments',
-      url:`entity/ClientCorporation/${id}/fileAttachments`
-        + `?fields=id,name,type,contentType,fileSize,dateAdded,description,isPrivate&count=50`,
-      note:'Not listed on ClientCorporation in the public entity reference — testing whether it works anyway.' },
-
-    { key:'legacy-entityFiles',
-      name:'Legacy endpoint: entityFiles/ClientCorporation/{id}',
-      url:`entityFiles/ClientCorporation/${id}`,
-      note:'Deprecated in Bullhorn’s own docs, but older tenants sometimes still serve it.' },
-
-    { key:'search-fileAttachment',
-      name:'Search the FileAttachment entity directly, filtered by parent',
-      url:`search/FileAttachment?query=clientCorporation.id:${id}`
-        + `&fields=id,name,type,contentType,fileSize,dateAdded,description,isPrivate&count=50`,
-      note:'FileAttachment may be a standalone searchable entity independent of the association list.' },
-
-    { key:'entity-expand',
-      name:'Expand fileAttachments as a field on the ClientCorporation entity itself',
-      url:`entity/ClientCorporation/${id}`
-        + `?fields=id,name,fileAttachments(id,name,contentType,fileSize,dateAdded)&meta=off`,
-      note:'Some tenants expose associations only when requested inline on the parent entity.' },
-  ];
+/* ── pdf.js text extraction ─────────────────────────────────────────
+   Pulls text from every page and reports it plainly. A near-empty result
+   from a normal-sized PDF is the signal that it's a scanned image, not a
+   failure of this code — that distinction is what this whole test exists
+   to surface, so it's stated outright rather than left to be inferred. */
+async function extractPdfText(bytesArr){
+  const task = pdfjsLib.getDocument({data: bytesArr});
+  const doc  = await task.promise;
+  let text = '', pages = doc.numPages;
+  for(let i=1;i<=Math.min(pages,15);i++){
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it=>it.str).join(' ') + '\n';
+  }
+  return {text: text.trim(), pages};
 }
 
-async function runProbe(p){
-  const box = el('probes');
+function b64ToBytes(b64){
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+/* ── format detection ───────────────────────────────────────────────
+   Filename extension first — it's the most reliable signal on this
+   tenant's file records; contentType is a fallback when the name is
+   ambiguous (some uploads carry a generic octet-stream content type). */
+function fileKind(f){
+  const name = (f.name||'').toLowerCase();
+  if(name.endsWith('.docx')) return 'docx';
+  if(name.endsWith('.doc'))  return 'doc';
+  if(name.endsWith('.pdf'))  return 'pdf';
+  const ct = (f.contentType||f.type||'').toLowerCase();
+  if(ct.includes('wordprocessingml')) return 'docx';
+  if(ct === 'application/msword')     return 'doc';
+  if(ct.includes('pdf'))              return 'pdf';
+  return 'other';
+}
+
+/* ── mammoth.js text extraction ─────────────────────────────────────
+   .docx is a zip of XML, not an image, so there's no scan-vs-text
+   ambiguity the way there is with PDF — this either works cleanly or
+   throws. mammoth has no page concept, so pages comes back null. */
+async function extractDocxText(bytesArr){
+  const result = await mammoth.extractRawText({arrayBuffer: bytesArr.buffer});
+  return {text: (result.value||'').trim(), pages: null};
+}
+
+async function runDoc(f, corpId){
+  const box = el('docs');
   const card = document.createElement('div');
-  card.className = 'probe';
+  card.className = 'doc';
   card.innerHTML = `
-    <div class="probe-hd">
-      <span class="stat pending" id="st-${p.key}">·</span>
-      <span class="probe-name">${esc(p.name)}</span>
+    <div class="doc-hd">
+      <span class="stat pending" id="st-${f.id}">·</span>
+      <span class="doc-name">${esc(f.name)}</span>
     </div>
-    <div class="probe-url">GET /${esc(p.url)}</div>
-    <div class="probe-result" id="res-${p.key}">Running…</div>`;
+    <div class="doc-meta">${esc(f.contentType||f.type||'—')} · ${bytes(f.fileSize)} · added
+      ${f.dateAdded ? new Date(f.dateAdded).toLocaleDateString('en-GB') : '—'}</div>
+    <div class="doc-body" id="res-${f.id}">Fetching content…</div>`;
   box.appendChild(card);
 
-  try{
-    const data = await bhGet(p.url);
-    const rows = Array.isArray(data) ? data
-      : (data && Array.isArray(data.data)) ? data.data
-      : (data && Array.isArray(data.fileAttachments && data.fileAttachments.data))
-        ? data.fileAttachments.data
-      : null;
+  if(f.fileSize && f.fileSize > MAX_BYTES){
+    el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
+    el(`res-${f.id}`).className = 'doc-body warn';
+    el(`res-${f.id}`).innerHTML = `<div class="verdict">Skipped — ${bytes(f.fileSize)} `
+      + `is over the ${bytes(MAX_BYTES)} test limit.</div>`;
+    dlog(`${f.name}: skipped, too large (${f.fileSize} bytes)`);
+    return {name:f.name, status:'skipped'};
+  }
 
-    if(rows && rows.length){
-      el(`st-${p.key}`).className = 'stat ok'; el(`st-${p.key}`).textContent = '✓';
-      el(`res-${p.key}`).className = 'probe-result';
-      el(`res-${p.key}`).innerHTML = `<b>${rows.length} file${rows.length===1?'':'s'} found.</b> ${esc(p.note)}`
-        + `<div class="rows"><table><thead><tr><th>Name</th><th>Type</th><th>Size</th>
-           <th>Added</th></tr></thead><tbody>`
-        + rows.slice(0,20).map(f=>`<tr><td>${esc(f.name||f.title||'—')}</td>`
-          + `<td>${esc(f.contentType||f.type||'—')}</td><td>${bytes(f.fileSize)}</td>`
-          + `<td>${f.dateAdded ? new Date(f.dateAdded).toLocaleDateString('en-GB') : '—'}</td></tr>`).join('')
-        + `</tbody></table></div>`
-        + `<details class="raw"><summary>Raw response</summary>`
-        + `<pre>${esc(JSON.stringify(data,null,2)).slice(0,4000)}</pre></details>`;
-      dlog(`${p.key}: OK — ${rows.length} rows`);
-      return {key:p.key, status:'ok', count:rows.length};
+  try{
+    dlog(`fetching content for "${f.name}" (id ${f.id})`);
+    const res = await bhGet(`file/ClientCorporation/${corpId}/${f.id}`);
+    const payload = res.data || res;
+    if(!payload || !payload.fileContent) throw new Error('No fileContent in response');
+
+    const raw = b64ToBytes(payload.fileContent);
+    const kind = fileKind(f);
+    dlog(`${f.name}: decoded ${raw.length} bytes, kind=${kind}`);
+
+    if(kind === 'doc'){
+      el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
+      el(`res-${f.id}`).className = 'doc-body warn';
+      el(`res-${f.id}`).innerHTML = `<div class="verdict">Legacy .doc — not readable client-side.</div>`
+        + `This is the old binary Word format (pre-2007), not the .docx zip/XML format. No lightweight `
+        + `browser library extracts text from it reliably. It would need converting to .docx or PDF `
+        + `first — a format problem, not a scan/OCR problem, so treat this differently from the `
+        + `PDF-scan case below.`;
+      dlog(`${f.name}: LEGACY .DOC — unsupported client-side`);
+      return {name:f.name, status:'unsupported-doc'};
     }
 
-    el(`st-${p.key}`).className = 'stat empty'; el(`st-${p.key}`).textContent = '0';
-    el(`res-${p.key}`).className = 'probe-result empty';
-    el(`res-${p.key}`).innerHTML = `Request succeeded but returned no files. Either this path is `
-      + `valid and the record genuinely has none, or the shape of the response wasn't what this `
-      + `probe expected — check the raw response below.`
-      + `<details class="raw"><summary>Raw response</summary>`
-      + `<pre>${esc(JSON.stringify(data,null,2)).slice(0,4000)}</pre></details>`;
-    dlog(`${p.key}: succeeded, 0 rows`);
-    return {key:p.key, status:'empty', count:0};
+    if(kind === 'other'){
+      el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
+      el(`res-${f.id}`).className = 'doc-body warn';
+      el(`res-${f.id}`).innerHTML = `<div class="verdict">Unrecognised file type — `
+        + `${esc(f.contentType||f.type||'unknown')}.</div>This test only handles PDF and Word (.docx) `
+        + `right now, so it was skipped rather than guessed at.`;
+      dlog(`${f.name}: UNKNOWN TYPE — skipped`);
+      return {name:f.name, status:'unsupported-other'};
+    }
+
+    dlog(`${f.name}: extracting text…`);
+    const {text, pages} = kind === 'docx' ? await extractDocxText(raw) : await extractPdfText(raw);
+    const chars = text.length;
+
+    if(kind === 'docx'){
+      if(chars > 50){
+        el(`st-${f.id}`).className = 'stat ok'; el(`st-${f.id}`).textContent = '✓';
+        el(`res-${f.id}`).className = 'doc-body';
+        el(`res-${f.id}`).innerHTML = `<div class="verdict">Real text — `
+          + `${chars.toLocaleString()} characters extracted from this Word document.</div>`
+          + `.docx is a zip of XML, not an image, so this is essentially always reliable — no OCR `
+          + `risk the way a scanned PDF has.`
+          + `<div class="excerpt"><div class="excerpt-lbl">First 500 characters, verbatim</div>`
+          + `${esc(text.slice(0,500))}${text.length>500?'…':''}</div>`;
+        dlog(`${f.name}: REAL TEXT (docx) — ${chars} chars`);
+        return {name:f.name, status:'text', chars, pages:null};
+      }
+      el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
+      el(`res-${f.id}`).className = 'doc-body warn';
+      el(`res-${f.id}`).innerHTML = `<div class="verdict">Almost no text extracted — `
+        + `${chars} character${chars===1?'':'s'}.</div>Unusual for a .docx — the body may be mostly `
+        + `tables, embedded images, or an empty template. Worth opening manually to check.`;
+      dlog(`${f.name}: LOW TEXT (docx) — ${chars} chars`);
+      return {name:f.name, status:'scan', chars, pages:null};
+    }
+
+    const wordsPerPage = chars / Math.max(pages,1) / 5.5; // rough words-per-page
+
+    if(chars > 200 && wordsPerPage > 30){
+      el(`st-${f.id}`).className = 'stat ok'; el(`st-${f.id}`).textContent = '✓';
+      el(`res-${f.id}`).className = 'doc-body';
+      el(`res-${f.id}`).innerHTML = `<div class="verdict">Real text layer — `
+        + `${chars.toLocaleString()} characters across ${pages} page${pages===1?'':'s'}.</div>`
+        + `This document is readable without OCR.`
+        + `<div class="excerpt"><div class="excerpt-lbl">First 500 characters, verbatim</div>`
+        + `${esc(text.slice(0,500))}${text.length>500?'…':''}</div>`;
+      dlog(`${f.name}: REAL TEXT — ${chars} chars, ${pages} pages`);
+      return {name:f.name, status:'text', chars, pages};
+    }
+
+    el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
+    el(`res-${f.id}`).className = 'doc-body warn';
+    el(`res-${f.id}`).innerHTML = `<div class="verdict">Little or no extractable text — `
+      + `${chars} character${chars===1?'':'s'} across ${pages} page${pages===1?'':'s'}.</div>`
+      + `This almost certainly means the PDF is a scanned image, not real text. `
+      + `Extraction here would need OCR, which has to run server-side.`
+      + (chars ? `<div class="excerpt"><div class="excerpt-lbl">Everything extracted</div>`
+        + `${esc(text)}</div>` : '');
+    dlog(`${f.name}: LIKELY SCAN — only ${chars} chars across ${pages} pages`);
+    return {name:f.name, status:'scan', chars, pages};
 
   }catch(err){
     const raw = err && err.api ? err.api : err;
     const msg = (raw && (raw.errorMessage || raw.message)) || String(raw||err);
-    el(`st-${p.key}`).className = 'stat fail'; el(`st-${p.key}`).textContent = '✕';
-    el(`res-${p.key}`).className = 'probe-result fail';
-    el(`res-${p.key}`).innerHTML = `<b>Failed:</b> ${esc(msg).slice(0,300)}`;
-    dlog(`${p.key}: FAILED — ${msg}`);
-    return {key:p.key, status:'fail', error:msg};
+    el(`st-${f.id}`).className = 'stat fail'; el(`st-${f.id}`).textContent = '✕';
+    el(`res-${f.id}`).className = 'doc-body fail';
+    el(`res-${f.id}`).innerHTML = `<b>Failed:</b> ${esc(msg).slice(0,300)}`;
+    dlog(`${f.name}: FAILED — ${msg}`);
+    return {name:f.name, status:'fail', error:msg};
   }
 }
 
@@ -245,31 +337,52 @@ async function boot(){
   el('stLoading').classList.add('hide');
   el('app').classList.remove('hide');
 
+  let files = [];
   try{
     const corp = await bhGet(`entity/ClientCorporation/${id}?fields=id,name&meta=off`);
     const name = (corp.data || corp).name || `#${id}`;
-    el('hSub').textContent = `${name} — testing every plausible read path, one at a time`;
-    dlog(`resolved client name: "${name}"`);
-  }catch(e){ el('hSub').textContent = `Client #${id}`; dlog(`could not resolve client name: ${e.message}`); }
+    const list = await bhGet(`entity/ClientCorporation/${id}/fileAttachments`
+      + `?fields=id,name,type,contentType,fileSize,dateAdded&count=50`);
+    files = (list.data || []).filter(looksLikeTerms);
+    if(!files.length) files = list.data || [];
+    files = preferSigned(files);
+    el('hSub').textContent = `${name} — reading ${files.length} document`
+      + `${files.length===1?'':'s'} to check for a real text layer`;
+    dlog(`resolved "${name}", testing ${files.length} of ${(list.data||[]).length} total files`);
+  }catch(e){
+    el('hSub').textContent = `Client #${id} — could not list files`;
+    dlog(`file list failed: ${e.message}`);
+    el('summary').innerHTML = `<h2>What this means</h2><p>Could not even list files — `
+      + `check the clientterms probe card first to confirm the read path still works.</p>`;
+    return;
+  }
 
-  const probes = buildProbes(id);
   const results = [];
-  for(const p of probes) results.push(await runProbe(p));  // sequential: one clean log per attempt
+  for(const f of files) results.push(await runDoc(f, id));  // sequential, one clean log per doc
 
-  const working = results.filter(r=>r.status==='ok');
-  const empty   = results.filter(r=>r.status==='empty');
-  const failed  = results.filter(r=>r.status==='fail');
+  const real = results.filter(r=>r.status==='text');
+  const scan = results.filter(r=>r.status==='scan');
+  const fail = results.filter(r=>r.status==='fail');
+  const unsupDoc   = results.filter(r=>r.status==='unsupported-doc');
+  const unsupOther = results.filter(r=>r.status==='unsupported-other');
   el('summary').innerHTML = `
     <h2>What this means</h2>
-    <p>${working.length
-      ? `<b>${working.map(r=>r.key).join(', ')}</b> returned real file rows — that's the path to build on.`
-      : empty.length
-        ? `No path returned files. ${empty.length} request${empty.length===1?'':'s'} succeeded but came back `
-          + `empty — either this record has no attachments, or the response shape didn't match what the `
-          + `probe looked for (open "Raw response" above to check by eye).`
-        : `Every path failed outright. Check the error text on each — 403 means a permissions problem, `
-          + `404 means the path itself doesn't exist on this tenant.`}
-      ${failed.length ? ` ${failed.length} path${failed.length===1?'':'s'} errored outright.` : ''}
+    <p>${real.length && !scan.length
+      ? `Every document tested has a real text layer. Client-side extraction into a parsing `
+        + `pipeline is viable for this client's documents — no OCR needed.`
+      : real.length && scan.length
+        ? `${real.length} of ${results.length} document${results.length===1?'':'s'} had real text; `
+          + `${scan.length} looked like scanned image${scan.length===1?'':'s'} or near-empty extracts. `
+          + `Extraction needs to handle both cases — text documents client-side, scans routed to OCR.`
+        : scan.length
+          ? `All tested documents look like scanned images or produced near-empty extracts. Text `
+            + `extraction here needs OCR, which means this has to run server-side, not in the card.`
+          : `No document produced a clear result — check the individual entries above.`}
+      ${fail.length ? ` ${fail.length} document${fail.length===1?'':'s'} failed to fetch outright.` : ''}
+      ${unsupDoc.length ? ` ${unsupDoc.length} document${unsupDoc.length===1?'':'s'} ${unsupDoc.length===1?'is':'are'} `
+        + `legacy .doc files — not readable client-side; would need converting to .docx or PDF first.` : ''}
+      ${unsupOther.length ? ` ${unsupOther.length} document${unsupOther.length===1?'':'s'} `
+        + `${unsupOther.length===1?'was':'were'} an unrecognised file type and ${unsupOther.length===1?'was':'were'} skipped.` : ''}
     </p>`;
 }
 
@@ -277,54 +390,63 @@ function init(){
   if(getParam('demo')==='1') return runDemo();
   register();
   watchdog = setTimeout(()=>{
-    if(!el('stLoading').classList.contains('hide')){ dlog('watchdog: still loading at 20s'); showNoConn(); }
-  }, 20000);
+    if(!el('stLoading').classList.contains('hide')){ dlog('watchdog: still loading at 25s'); showNoConn(); }
+  }, 25000);
 }
 
-/* ── demo mode: fabricated responses so the layout can be seen without BH ── */
+/* ── demo mode ─────────────────────────────────────────────────────── */
 function runDemo(){
   el('stLoading').classList.add('hide');
   el('app').classList.remove('hide');
   el('hSub').textContent = 'Demo Client Ltd — sample data, not connected to Bullhorn';
-  const box = el('probes');
+  const box = el('docs');
   const demo = [
-    {name:'Current REST association: entity/ClientCorporation/{id}/fileAttachments',
-     url:'entity/ClientCorporation/9/fileAttachments?fields=...', status:'fail',
-     msg:'404 Not Found — no such association on this entity'},
-    {name:'Legacy endpoint: entityFiles/ClientCorporation/{id}',
-     url:'entityFiles/ClientCorporation/9', status:'ok',
-     rows:[{name:'MSA - St John Ambulance.pdf',contentType:'application/pdf',fileSize:184320,
-            dateAdded:Date.now()-400*DAY},
-           {name:'Rate Card 2025.docx',contentType:'application/msword',fileSize:41200,
-            dateAdded:Date.now()-90*DAY}]},
-    {name:'Search the FileAttachment entity directly, filtered by parent',
-     url:'search/FileAttachment?query=clientCorporation.id:9...', status:'empty'},
-    {name:'Expand fileAttachments as a field on the ClientCorporation entity itself',
-     url:'entity/ClientCorporation/9?fields=...fileAttachments(...)', status:'fail',
-     msg:'400 Bad Request — unknown field "fileAttachments" on ClientCorporation'},
+    {name:'v1.0 Demo Client Gravitas Contract Terms CSigned.pdf', type:'application/pdf',
+     fileSize:496000, status:'text', chars:14200, pages:6,
+     excerpt:'CONTRACT FOR SERVICES\n\nThis Agreement is made between Gravitas Group ("the Agency") '
+       + 'and Demo Client Ltd ("the Client")...\n\n1. INTRODUCTION FEE\n1.1 The Agency\'s fee for the '
+       + 'introduction of a Candidate who is engaged by the Client shall be 18% of the first annual...'},
+    {name:'v1.0 Demo Client Gravitas PAYE Terms CSigned.pdf', type:'application/pdf',
+     fileSize:410000, status:'scan', chars:44, pages:3},
+    {name:'v2.0 Demo Client Gravitas Rebate Schedule CSigned.docx',
+     type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+     fileSize:38000, status:'text', chars:6100, pages:null,
+     excerpt:'REBATE SCHEDULE — SCHEDULE 2\n\nWhere a placed Candidate leaves the Client\'s employment '
+       + 'within the Rebate Period, the Agency shall refund the Client on a sliding scale: 0-4 weeks '
+       + '100%, 5-8 weeks 50%, 9-12 weeks 25%, thereafter nil...'},
+    {name:'Legacy Demo Client Terms 2011.doc', type:'application/msword',
+     fileSize:88000, status:'unsupported-doc'},
   ];
   demo.forEach(d=>{
     const card = document.createElement('div');
-    card.className = 'probe';
-    const icon = d.status==='ok'?'✓':d.status==='empty'?'0':'✕';
-    const cls  = d.status==='ok'?'ok':d.status==='empty'?'empty':'fail';
-    let body = '';
-    if(d.status==='ok') body = `<b>${d.rows.length} files found.</b>`
-      + `<div class="rows"><table><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Added</th></tr></thead>`
-      + `<tbody>${d.rows.map(f=>`<tr><td>${esc(f.name)}</td><td>${esc(f.contentType)}</td>`
-        + `<td>${bytes(f.fileSize)}</td><td>${new Date(f.dateAdded).toLocaleDateString('en-GB')}</td></tr>`).join('')}`
-      + `</tbody></table></div>`;
-    else if(d.status==='empty') body = 'Request succeeded but returned no files.';
-    else body = `<b>Failed:</b> ${esc(d.msg)}`;
-    card.innerHTML = `<div class="probe-hd"><span class="stat ${cls}">${icon}</span>`
-      + `<span class="probe-name">${esc(d.name)}</span></div>`
-      + `<div class="probe-url">GET /${esc(d.url)}</div>`
-      + `<div class="probe-result ${d.status==='fail'?'fail':d.status==='empty'?'empty':''}">${body}</div>`;
+    card.className = 'doc';
+    const icon = d.status==='text' ? '✓' : '!';
+    const cls  = d.status==='text' ? 'ok' : 'warn';
+    let body;
+    if(d.status==='text'){
+      const suffix = d.pages ? ` across ${d.pages} pages` : ' from this Word document';
+      body = `<div class="verdict">Real text${d.pages?' layer':''} — ${d.chars.toLocaleString()} `
+        + `characters${suffix}.</div>This document is readable without OCR.`
+        + `<div class="excerpt"><div class="excerpt-lbl">First 500 characters, verbatim</div>`
+        + `${esc(d.excerpt)}</div>`;
+    } else if(d.status==='scan'){
+      body = `<div class="verdict">Little or no extractable text — ${d.chars} characters across `
+        + `${d.pages} pages.</div>This almost certainly means the PDF is a scanned image.`;
+    } else {
+      body = `<div class="verdict">Legacy .doc — not readable client-side.</div>This is the old `
+        + `binary Word format (pre-2007), not the .docx zip/XML format. It would need converting `
+        + `to .docx or PDF first — a format problem, not a scan/OCR problem.`;
+    }
+    card.innerHTML = `<div class="doc-hd"><span class="stat ${cls}">${icon}</span>`
+      + `<span class="doc-name">${esc(d.name)}</span></div>`
+      + `<div class="doc-meta">${esc(d.type)} · ${bytes(d.fileSize)} · added 24/12/2025</div>`
+      + `<div class="doc-body ${d.status!=='text'?'warn':''}">${body}</div>`;
     box.appendChild(card);
   });
-  el('summary').innerHTML = `<h2>What this means</h2><p>Sample output only — in this fabricated example the `
-    + `legacy <b>entityFiles</b> endpoint is the one that works. Run this for real against a live record to `
-    + `see which path actually applies on your tenant.</p>`;
+  el('summary').innerHTML = `<h2>What this means</h2><p>Sample output only, showing all four cases `
+    + `this card now handles: a PDF with a real text layer, a scanned PDF, a .docx with real text, `
+    + `and a legacy .doc reported as unsupported rather than misread as a scan. `
+    + `Run this for real to see which of these is true for your documents.</p>`;
   dlog('demo mode — no AppBridge calls made');
 }
 
