@@ -3,36 +3,30 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ClientCorp Terms — read test</title>
+<title>ClientCorp Terms Summary</title>
 
 <!--
-  DIAGNOSTIC CARD, stage 2. Stage 1 (clientterms probe) already established
-  the real read path on this tenant: entity/ClientCorporation/{id}/
-  fileAttachments returns real rows even though it isn't in Bullhorn's
-  public entity reference. This stage answers the one question that
-  decides everything downstream: do these PDFs have a real text layer,
-  or are they scanned images?
+  Stage 3. Stages 1 and 2 (clientterms probe, clientcorp-terms-read-test)
+  proved on real SYMCA data that this tenant's ClientCorporation file
+  attachments are readable and that PDF text extraction works end to end —
+  both signed terms docs came back with 47k-53k characters of real text.
 
-  If extraction yields substantial real text → client-side text extraction
-  is viable, and the next build step is sending that text to a parsing
-  service (never an AI key in this card — see the T&C conversation this
-  card came out of). If extraction yields near-nothing → these are scans,
-  OCR is required, and that only happens server-side. Either answer is a
-  real, useful answer. Nothing here summarises or interprets the terms —
-  it only proves whether the words are reachable at all.
+  This card reuses that exact proven file-list + extract pipeline, then
+  adds the one new step: POST the extracted text to a small middleware
+  Worker (clientcorp-terms-worker.js) that holds the Anthropic API key —
+  which can never live in this card, since anyone who opens it can read
+  its source — and asks Claude to extract condensed commercial terms with
+  a verbatim source quote for every value. "Extract and cite, never
+  summarise and assert": every finding on screen shows the exact sentence
+  it came from, so nothing here is ever a bare confident assertion you
+  can't check against the real contract.
 
-  Handles three formats now: PDF (pdf.js, text-layer-vs-scan check), .docx
-  (mammoth.js — a zip of XML, essentially always extractable, no OCR risk),
-  and legacy binary .doc (pre-2007 format — explicitly reported as
-  unsupported client-side rather than silently failing or being misread
-  as a "scan", since that's a different problem needing a different fix
-  — a format conversion, not OCR).
-
-  pdf.js and mammoth.js both loaded from cdnjs, same reasoning as the
-  post-robot pin: this card only exists to answer one factual question, so
-  it uses whatever currently-published build does the job — no legacy wire
-  protocol is involved here, so no reason to pin an old commit the way
-  post-robot needed to.
+  WORKER_URL below is a placeholder until the Worker is actually deployed
+  (see clientcorp-terms-worker.js for what's still outstanding — an
+  Anthropic Console/API key and a Cloudflare account, neither set up yet
+  as of 26 Aug 2026). Until then, ?demo=1 shows the intended layout with
+  fabricated findings, and a real run will show a clear "not configured
+  yet" message rather than a confusing generic network failure.
 -->
 <script src="https://cdn.jsdelivr.net/gh/krakenjs/post-robot@7da06445/dist/post-robot.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -53,29 +47,22 @@ body{font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-s
 .pill{font-size:11px;padding:2px 9px;border-radius:999px;background:#fef7e0;color:#b06000;
   border:1px solid #f5deb0;font-weight:500;white-space:nowrap}
 .wrap{padding:12px 14px}
-.doc{border:1px solid #e0e3e7;border-radius:8px;margin-bottom:10px;overflow:hidden}
-.doc-hd{display:flex;align-items:center;gap:9px;padding:9px 12px;background:#f8f9fa;
-  border-bottom:1px solid #eceff1}
-.stat{width:18px;height:18px;border-radius:50%;flex:0 0 auto;display:flex;align-items:center;
-  justify-content:center;font-size:11px;font-weight:700;color:#fff}
-.stat.pending{background:#dadce0;color:#5f6368}
-.stat.ok{background:#1e8e3e}
-.stat.warn{background:#f29900}
-.stat.fail{background:#d93025}
-.doc-name{font-size:12.5px;font-weight:500;flex:1;min-width:0;word-break:break-word}
-.doc-meta{font-size:10.5px;color:#5f6368;font-family:ui-monospace,Consolas,monospace;
-  padding:8px 12px;border-bottom:1px solid #eceff1;background:#fff}
-.doc-body{padding:9px 12px;font-size:12px}
-.doc-body.fail{color:#c5221f}
-.doc-body.warn{color:#b06000}
-.verdict{font-weight:700;margin-bottom:4px}
-.excerpt{margin-top:8px;background:#f8f9fa;border:1px solid #eceff1;border-radius:6px;
-  padding:9px;font-size:11.5px;line-height:1.6;max-height:180px;overflow:auto;white-space:pre-wrap}
-.excerpt-lbl{font-size:10px;color:#5f6368;text-transform:uppercase;letter-spacing:.05em;
-  font-weight:700;margin-bottom:4px}
-.summary{margin:14px 0 0;padding:12px;border:1px solid #e0e3e7;border-radius:8px;background:#f8f9fa}
-.summary h2{font-size:12.5px;margin-bottom:6px}
-.summary p{font-size:12px;color:#3c4043;line-height:1.6}
+.stepmsg{font-size:12px;color:#5f6368;padding:0 14px 10px}
+.finding{border:1px solid #e0e3e7;border-radius:8px;margin-bottom:8px;overflow:hidden}
+.f-hd{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;
+  background:#f8f9fa;cursor:pointer}
+.f-label{font-size:12.5px;font-weight:700;color:#202124}
+.f-value{font-size:12.5px;color:#1a73e8;font-weight:600;white-space:nowrap}
+.f-doc{font-size:10.5px;color:#5f6368;padding:0 12px 8px}
+.f-quote{display:none;padding:9px 12px;font-size:11.5px;line-height:1.6;background:#fffbea;
+  border-top:1px solid #f5deb0;color:#5f4300;font-style:italic}
+.f-quote.show{display:block}
+.f-toggle{font-size:10.5px;color:#1a73e8;font-weight:500;flex:0 0 auto}
+.notfound{margin-top:14px;padding:12px;border:1px solid #e0e3e7;border-radius:8px;background:#f8f9fa}
+.notfound h2{font-size:12px;margin-bottom:6px;color:#5f6368}
+.notfound ul{padding-left:18px;color:#5f6368;font-size:11.5px;line-height:1.7}
+.skipped{margin-top:14px;padding:12px;border:1px solid #f5deb0;border-radius:8px;background:#fef7e0;
+  color:#b06000;font-size:11.5px;line-height:1.6}
 .state{min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:9px;padding:24px;text-align:center}
 .state-t{font-size:14px;font-weight:500}
@@ -83,7 +70,7 @@ body{font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-s
 .spin{width:20px;height:20px;border:2px solid #e0e3e7;border-top-color:#1a73e8;border-radius:50%;
   animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-#dbg{margin-top:14px;background:#1a1a1a;color:#d7ffd7;font:11px/1.5 ui-monospace,Consolas,monospace;
+#dbg{margin:0 14px 14px;background:#1a1a1a;color:#d7ffd7;font:11px/1.5 ui-monospace,Consolas,monospace;
   padding:8px 10px;border-radius:8px;max-height:200px;overflow:auto}
 </style>
 </head>
@@ -92,14 +79,16 @@ body{font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-s
 <div id="app" class="hide">
   <div class="hdr">
     <div>
-      <h1>Terms documents — text-layer read test</h1>
+      <h1>Terms summary</h1>
       <p id="hSub">—</p>
     </div>
-    <span class="pill">Diagnostic — not for daily use</span>
+    <span class="pill">Beta — verify against source before relying on it</span>
   </div>
-  <div class="wrap" id="docs"></div>
-  <div class="wrap"><div class="summary" id="summary"></div></div>
-  <div class="wrap"><div id="dbg"></div></div>
+  <div class="stepmsg" id="stepMsg"></div>
+  <div class="wrap" id="findings"></div>
+  <div class="wrap"><div id="notfoundBox"></div></div>
+  <div class="wrap"><div id="skippedBox"></div></div>
+  <div id="dbg"></div>
 </div>
 
 <div class="state" id="stLoading">
@@ -111,18 +100,28 @@ body{font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-s
   <div class="state-m">Open this card from a Client Corporation record.
     Add <code>?demo=1</code> to see the layout without live data.</div>
 </div>
+<div class="state hide" id="stNoWorker">
+  <div class="state-t">Middleware not configured yet</div>
+  <div class="state-m">WORKER_URL in this file is still a placeholder. Deploy
+    clientcorp-terms-worker.js (needs an Anthropic Console API key and a
+    Cloudflare account — see the setup notes at the top of that file) and
+    update WORKER_URL here before this card can extract terms for real.
+    Add <code>?demo=1</code> to see the layout without live data.</div>
+</div>
 
 <script>
 "use strict";
 const el = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const bytes = n => n==null ? '—' : n<1024 ? n+' B'
-  : n<1048576 ? (n/1024).toFixed(1)+' KB' : (n/1048576).toFixed(1)+' MB';
 
-/* Only bother extracting from documents that look like the executed terms —
-   signed, not superseded drafts — and skip anything unreasonably large for
-   a browser-side base64 round trip. */
+/* ── configure once the Worker is deployed ──────────────────────────
+   Swap this for the *.workers.dev URL wrangler prints on deploy (or a
+   custom domain routed to the Worker). Left as an obvious placeholder
+   on purpose so a misconfigured deploy fails loudly via stNoWorker
+   rather than a confusing generic fetch error. */
+const WORKER_URL = 'https://REPLACE-ME.workers.dev/';
+
 const MAX_BYTES = 5_000_000;
 const looksLikeTerms = f => /terms|agreement|contract|msa|paye/i.test(f.name||'');
 const preferSigned   = fs => {
@@ -134,11 +133,13 @@ let t0 = null;
 function dlog(msg){
   if(t0==null) t0 = (typeof performance!=='undefined') ? performance.now() : 0;
   const t = (((typeof performance!=='undefined') ? performance.now() : 0) - t0)/1000;
-  console.log('[TermsReadTest]', msg);
-  const box = el('dbg');
-  if(box){ const row = document.createElement('div');
+  console.log('[TermsSummary]', msg);
+  if(new URLSearchParams(location.search).get('debug')==='1'){
+    const box = el('dbg');
+    const row = document.createElement('div');
     row.textContent = `[+${t.toFixed(2)}s] ${msg}`; box.appendChild(row);
-    box.scrollTop = box.scrollHeight; }
+    box.scrollTop = box.scrollHeight;
+  }
 }
 
 const getParam = k => new URLSearchParams(location.search).get(k);
@@ -147,10 +148,10 @@ function register(){
   regTries++;
   dlog(`register() attempt ${regTries}/4`);
   if(typeof postRobot === 'undefined')
-    return dlog('post-robot failed to load') || showNoConn();
-  postRobot.sendToParent('register',{title:'Terms Read Test'},{timeout:5000})
+    return dlog('post-robot failed to load') || showState('stNoConn');
+  postRobot.sendToParent('register',{title:'Terms Summary'},{timeout:5000})
     .then(()=>{ dlog('registered'); boot(); })
-    .catch(()=> regTries<4 ? setTimeout(register,500) : (dlog('gave up after 4 attempts'), showNoConn()));
+    .catch(()=> regTries<4 ? setTimeout(register,500) : (dlog('gave up after 4 attempts'), showState('stNoConn')));
 }
 function unwrap(evt){
   const p = evt && evt.data;
@@ -160,14 +161,15 @@ function unwrap(evt){
 }
 const bhGet = u => { dlog(`GET ${u}`);
   return postRobot.sendToParent('httpGET',{relativeURL:u},{timeout:25000}).then(unwrap); };
-function showNoConn(){ el('app').classList.add('hide'); el('stLoading').classList.add('hide');
-  el('stNoConn').classList.remove('hide'); }
 
-/* ── pdf.js text extraction ─────────────────────────────────────────
-   Pulls text from every page and reports it plainly. A near-empty result
-   from a normal-sized PDF is the signal that it's a scanned image, not a
-   failure of this code — that distinction is what this whole test exists
-   to surface, so it's stated outright rather than left to be inferred. */
+function showState(id){
+  ['app','stLoading','stNoConn','stNoWorker'].forEach(x=>el(x).classList.add('hide'));
+  el(id).classList.remove('hide');
+}
+
+/* ── extraction (identical logic to clientcorp-terms-read-test.html —
+   kept in lockstep deliberately; that card is the proven reference for
+   this part, this one only adds the summarise-and-cite step after it) */
 async function extractPdfText(bytesArr){
   const task = pdfjsLib.getDocument({data: bytesArr});
   const doc  = await task.promise;
@@ -179,18 +181,16 @@ async function extractPdfText(bytesArr){
   }
   return {text: text.trim(), pages};
 }
-
+async function extractDocxText(bytesArr){
+  const result = await mammoth.extractRawText({arrayBuffer: bytesArr.buffer});
+  return {text: (result.value||'').trim(), pages: null};
+}
 function b64ToBytes(b64){
   const bin = atob(b64);
   const arr = new Uint8Array(bin.length);
   for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
   return arr;
 }
-
-/* ── format detection ───────────────────────────────────────────────
-   Filename extension first — it's the most reliable signal on this
-   tenant's file records; contentType is a fallback when the name is
-   ambiguous (some uploads carry a generic octet-stream content type). */
 function fileKind(f){
   const name = (f.name||'').toLowerCase();
   if(name.endsWith('.docx')) return 'docx';
@@ -203,265 +203,190 @@ function fileKind(f){
   return 'other';
 }
 
-/* ── mammoth.js text extraction ─────────────────────────────────────
-   .docx is a zip of XML, not an image, so there's no scan-vs-text
-   ambiguity the way there is with PDF — this either works cleanly or
-   throws. mammoth has no page concept, so pages comes back null. */
-async function extractDocxText(bytesArr){
-  const result = await mammoth.extractRawText({arrayBuffer: bytesArr.buffer});
-  return {text: (result.value||'').trim(), pages: null};
-}
-
-async function runDoc(f, corpId){
-  const box = el('docs');
-  const card = document.createElement('div');
-  card.className = 'doc';
-  card.innerHTML = `
-    <div class="doc-hd">
-      <span class="stat pending" id="st-${f.id}">·</span>
-      <span class="doc-name">${esc(f.name)}</span>
-    </div>
-    <div class="doc-meta">${esc(f.contentType||f.type||'—')} · ${bytes(f.fileSize)} · added
-      ${f.dateAdded ? new Date(f.dateAdded).toLocaleDateString('en-GB') : '—'}</div>
-    <div class="doc-body" id="res-${f.id}">Fetching content…</div>`;
-  box.appendChild(card);
-
+async function extractOne(f, corpId){
   if(f.fileSize && f.fileSize > MAX_BYTES){
-    el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
-    el(`res-${f.id}`).className = 'doc-body warn';
-    el(`res-${f.id}`).innerHTML = `<div class="verdict">Skipped — ${bytes(f.fileSize)} `
-      + `is over the ${bytes(MAX_BYTES)} test limit.</div>`;
     dlog(`${f.name}: skipped, too large (${f.fileSize} bytes)`);
-    return {name:f.name, status:'skipped'};
+    return {name:f.name, ok:false, reason:`Too large — over the ${(MAX_BYTES/1e6).toFixed(0)}MB test limit`};
   }
+  const kind = fileKind(f);
+  if(kind === 'doc')   return {name:f.name, ok:false, reason:'Legacy .doc — not readable client-side, needs converting to .docx or PDF first'};
+  if(kind === 'other') return {name:f.name, ok:false, reason:`Unrecognised file type (${f.contentType||f.type||'unknown'})`};
 
   try{
-    dlog(`fetching content for "${f.name}" (id ${f.id})`);
-    /* Confirmed live against SYMCA (ClientCorporation 57924): this endpoint
-       wraps its payload one level deeper than every other call in this card
-       — the real shape is {"File":{"contentType":"...","fileContent":"..."}},
-       not fileContent at the top level. The explicit ?fields=id,name,
-       fileContent from the earlier fix was fine and stays; the bug was only
-       ever in how the response was unwrapped. Falls back to the flat shape
-       too, in case a different tenant or a future API version returns it
-       unwrapped — cheap to support both, no reason to assume one forever. */
     const res = await bhGet(`file/ClientCorporation/${corpId}/${f.id}?fields=id,name,fileContent`);
     const payload = res.data || res;
     const fileObj = payload && (payload.File || payload);
-    if(!fileObj || !fileObj.fileContent){
-      const keys = payload && typeof payload==='object' ? Object.keys(payload).join(', ') : typeof payload;
-      const rawDump = (()=>{ try{ return JSON.stringify(payload).slice(0,400); }catch(_){ return String(payload); } })();
-      dlog(`${f.name}: no fileContent — keys returned: [${keys}]  raw: ${rawDump}`);
-      throw new Error(`No fileContent in response (keys returned: ${keys||'none'})`);
-    }
+    if(!fileObj || !fileObj.fileContent) throw new Error('No fileContent in response');
 
     const raw = b64ToBytes(fileObj.fileContent);
-    const kind = fileKind(f);
-    dlog(`${f.name}: decoded ${raw.length} bytes, kind=${kind}`);
-
-    if(kind === 'doc'){
-      el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
-      el(`res-${f.id}`).className = 'doc-body warn';
-      el(`res-${f.id}`).innerHTML = `<div class="verdict">Legacy .doc — not readable client-side.</div>`
-        + `This is the old binary Word format (pre-2007), not the .docx zip/XML format. No lightweight `
-        + `browser library extracts text from it reliably. It would need converting to .docx or PDF `
-        + `first — a format problem, not a scan/OCR problem, so treat this differently from the `
-        + `PDF-scan case below.`;
-      dlog(`${f.name}: LEGACY .DOC — unsupported client-side`);
-      return {name:f.name, status:'unsupported-doc'};
-    }
-
-    if(kind === 'other'){
-      el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
-      el(`res-${f.id}`).className = 'doc-body warn';
-      el(`res-${f.id}`).innerHTML = `<div class="verdict">Unrecognised file type — `
-        + `${esc(f.contentType||f.type||'unknown')}.</div>This test only handles PDF and Word (.docx) `
-        + `right now, so it was skipped rather than guessed at.`;
-      dlog(`${f.name}: UNKNOWN TYPE — skipped`);
-      return {name:f.name, status:'unsupported-other'};
-    }
-
-    dlog(`${f.name}: extracting text…`);
     const {text, pages} = kind === 'docx' ? await extractDocxText(raw) : await extractPdfText(raw);
     const chars = text.length;
-
-    if(kind === 'docx'){
-      if(chars > 50){
-        el(`st-${f.id}`).className = 'stat ok'; el(`st-${f.id}`).textContent = '✓';
-        el(`res-${f.id}`).className = 'doc-body';
-        el(`res-${f.id}`).innerHTML = `<div class="verdict">Real text — `
-          + `${chars.toLocaleString()} characters extracted from this Word document.</div>`
-          + `.docx is a zip of XML, not an image, so this is essentially always reliable — no OCR `
-          + `risk the way a scanned PDF has.`
-          + `<div class="excerpt"><div class="excerpt-lbl">First 500 characters, verbatim</div>`
-          + `${esc(text.slice(0,500))}${text.length>500?'…':''}</div>`;
-        dlog(`${f.name}: REAL TEXT (docx) — ${chars} chars`);
-        return {name:f.name, status:'text', chars, pages:null};
-      }
-      el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
-      el(`res-${f.id}`).className = 'doc-body warn';
-      el(`res-${f.id}`).innerHTML = `<div class="verdict">Almost no text extracted — `
-        + `${chars} character${chars===1?'':'s'}.</div>Unusual for a .docx — the body may be mostly `
-        + `tables, embedded images, or an empty template. Worth opening manually to check.`;
-      dlog(`${f.name}: LOW TEXT (docx) — ${chars} chars`);
-      return {name:f.name, status:'scan', chars, pages:null};
+    const isReal = kind === 'docx' ? chars > 50 : (chars > 200 && (chars/Math.max(pages,1)/5.5) > 30);
+    if(!isReal){
+      dlog(`${f.name}: little/no extractable text (${chars} chars) — treating as unreadable, skipped`);
+      return {name:f.name, ok:false, reason:'Looks like a scanned image — no extractable text, needs OCR'};
     }
-
-    const wordsPerPage = chars / Math.max(pages,1) / 5.5; // rough words-per-page
-
-    if(chars > 200 && wordsPerPage > 30){
-      el(`st-${f.id}`).className = 'stat ok'; el(`st-${f.id}`).textContent = '✓';
-      el(`res-${f.id}`).className = 'doc-body';
-      el(`res-${f.id}`).innerHTML = `<div class="verdict">Real text layer — `
-        + `${chars.toLocaleString()} characters across ${pages} page${pages===1?'':'s'}.</div>`
-        + `This document is readable without OCR.`
-        + `<div class="excerpt"><div class="excerpt-lbl">First 500 characters, verbatim</div>`
-        + `${esc(text.slice(0,500))}${text.length>500?'…':''}</div>`;
-      dlog(`${f.name}: REAL TEXT — ${chars} chars, ${pages} pages`);
-      return {name:f.name, status:'text', chars, pages};
-    }
-
-    el(`st-${f.id}`).className = 'stat warn'; el(`st-${f.id}`).textContent = '!';
-    el(`res-${f.id}`).className = 'doc-body warn';
-    el(`res-${f.id}`).innerHTML = `<div class="verdict">Little or no extractable text — `
-      + `${chars} character${chars===1?'':'s'} across ${pages} page${pages===1?'':'s'}.</div>`
-      + `This almost certainly means the PDF is a scanned image, not real text. `
-      + `Extraction here would need OCR, which has to run server-side.`
-      + (chars ? `<div class="excerpt"><div class="excerpt-lbl">Everything extracted</div>`
-        + `${esc(text)}</div>` : '');
-    dlog(`${f.name}: LIKELY SCAN — only ${chars} chars across ${pages} pages`);
-    return {name:f.name, status:'scan', chars, pages};
-
+    dlog(`${f.name}: extracted ${chars} chars`);
+    return {name:f.name, ok:true, text};
   }catch(err){
     const raw = err && err.api ? err.api : err;
     const msg = (raw && (raw.errorMessage || raw.message)) || String(raw||err);
-    el(`st-${f.id}`).className = 'stat fail'; el(`st-${f.id}`).textContent = '✕';
-    el(`res-${f.id}`).className = 'doc-body fail';
-    el(`res-${f.id}`).innerHTML = `<b>Failed:</b> ${esc(msg).slice(0,300)}`;
-    dlog(`${f.name}: FAILED — ${msg}`);
-    return {name:f.name, status:'fail', error:msg};
+    dlog(`${f.name}: extraction failed — ${msg}`);
+    return {name:f.name, ok:false, reason:`Fetch/extract failed: ${msg}`};
   }
 }
 
+/* ── render ──────────────────────────────────────────────────────── */
+function renderFindings(findings){
+  const box = el('findings');
+  box.innerHTML = '';
+  if(!findings.length){
+    box.innerHTML = `<div class="state-m" style="padding:10px 0">No commercial terms were confidently extracted from the supplied documents.</div>`;
+    return;
+  }
+  findings.forEach((f,i)=>{
+    const card = document.createElement('div');
+    card.className = 'finding';
+    card.innerHTML = `
+      <div class="f-hd" data-i="${i}">
+        <div>
+          <div class="f-label">${esc(f.label)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="f-value">${esc(f.value)}</span>
+          <span class="f-toggle">show source ▾</span>
+        </div>
+      </div>
+      <div class="f-doc">${esc(f.documentName)}</div>
+      <div class="f-quote" id="q-${i}">"${esc(f.sourceQuote)}"</div>`;
+    box.appendChild(card);
+  });
+  box.querySelectorAll('.f-hd').forEach(hd=>{
+    hd.addEventListener('click', ()=>{
+      const i = hd.dataset.i;
+      const q = el(`q-${i}`);
+      const toggle = hd.querySelector('.f-toggle');
+      const showing = q.classList.toggle('show');
+      toggle.textContent = showing ? 'hide source ▴' : 'show source ▾';
+    });
+  });
+}
+function renderNotFound(notFound){
+  const box = el('notfoundBox');
+  if(!notFound || !notFound.length){ box.innerHTML=''; return; }
+  box.innerHTML = `<div class="notfound"><h2>Looked for, not found in the supplied documents</h2>
+    <ul>${notFound.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div>`;
+}
+function renderSkipped(skipped){
+  const box = el('skippedBox');
+  if(!skipped.length){ box.innerHTML=''; return; }
+  box.innerHTML = `<div class="skipped"><b>${skipped.length} document${skipped.length===1?'':'s'} not included:</b><br>`
+    + skipped.map(s=>`${esc(s.name)} — ${esc(s.reason)}`).join('<br>') + `</div>`;
+}
+
+/* ── boot ────────────────────────────────────────────────────────── */
 async function boot(){
   const id = parseInt(getParam('EntityID'),10);
   dlog(`boot() — EntityID = ${JSON.stringify(getParam('EntityID'))}`);
-  if(!id) return showNoConn();
+  if(!id) return showState('stNoConn');
+
+  if(WORKER_URL.includes('REPLACE-ME')){
+    dlog('WORKER_URL is still the placeholder — stopping before any doc work');
+    return showState('stNoWorker');
+  }
 
   el('stLoading').classList.add('hide');
   el('app').classList.remove('hide');
+  el('stepMsg').textContent = 'Reading client file list…';
 
-  let files = [];
+  let files = [], clientName = `#${id}`;
   try{
     const corp = await bhGet(`entity/ClientCorporation/${id}?fields=id,name&meta=off`);
-    const name = (corp.data || corp).name || `#${id}`;
+    clientName = (corp.data || corp).name || clientName;
     const list = await bhGet(`entity/ClientCorporation/${id}/fileAttachments`
       + `?fields=id,name,type,contentType,fileSize,dateAdded&count=50`);
     files = (list.data || []).filter(looksLikeTerms);
     if(!files.length) files = list.data || [];
     files = preferSigned(files);
-    el('hSub').textContent = `${name} — reading ${files.length} document`
-      + `${files.length===1?'':'s'} to check for a real text layer`;
-    dlog(`resolved "${name}", testing ${files.length} of ${(list.data||[]).length} total files`);
+    el('hSub').textContent = `${clientName}`;
+    dlog(`resolved "${clientName}", ${files.length} candidate document(s)`);
   }catch(e){
-    el('hSub').textContent = `Client #${id} — could not list files`;
+    el('stepMsg').textContent = '';
+    el('findings').innerHTML = `<div class="state-m">Could not list files for this client — check the clientterms probe card first.</div>`;
     dlog(`file list failed: ${e.message}`);
-    el('summary').innerHTML = `<h2>What this means</h2><p>Could not even list files — `
-      + `check the clientterms probe card first to confirm the read path still works.</p>`;
     return;
   }
 
-  const results = [];
-  for(const f of files) results.push(await runDoc(f, id));  // sequential, one clean log per doc
+  if(!files.length){
+    el('stepMsg').textContent = '';
+    el('findings').innerHTML = `<div class="state-m">No terms/agreement documents found on this client record.</div>`;
+    return;
+  }
 
-  const real = results.filter(r=>r.status==='text');
-  const scan = results.filter(r=>r.status==='scan');
-  const fail = results.filter(r=>r.status==='fail');
-  const unsupDoc   = results.filter(r=>r.status==='unsupported-doc');
-  const unsupOther = results.filter(r=>r.status==='unsupported-other');
-  el('summary').innerHTML = `
-    <h2>What this means</h2>
-    <p>${real.length && !scan.length
-      ? `Every document tested has a real text layer. Client-side extraction into a parsing `
-        + `pipeline is viable for this client's documents — no OCR needed.`
-      : real.length && scan.length
-        ? `${real.length} of ${results.length} document${results.length===1?'':'s'} had real text; `
-          + `${scan.length} looked like scanned image${scan.length===1?'':'s'} or near-empty extracts. `
-          + `Extraction needs to handle both cases — text documents client-side, scans routed to OCR.`
-        : scan.length
-          ? `All tested documents look like scanned images or produced near-empty extracts. Text `
-            + `extraction here needs OCR, which means this has to run server-side, not in the card.`
-          : `No document produced a clear result — check the individual entries above.`}
-      ${fail.length ? ` ${fail.length} document${fail.length===1?'':'s'} failed to fetch outright.` : ''}
-      ${unsupDoc.length ? ` ${unsupDoc.length} document${unsupDoc.length===1?'':'s'} ${unsupDoc.length===1?'is':'are'} `
-        + `legacy .doc files — not readable client-side; would need converting to .docx or PDF first.` : ''}
-      ${unsupOther.length ? ` ${unsupOther.length} document${unsupOther.length===1?'':'s'} `
-        + `${unsupOther.length===1?'was':'were'} an unrecognised file type and ${unsupOther.length===1?'was':'were'} skipped.` : ''}
-    </p>`;
+  el('stepMsg').textContent = `Extracting text from ${files.length} document${files.length===1?'':'s'}…`;
+  const extracted = [];
+  for(const f of files) extracted.push(await extractOne(f, id));  // sequential — same reasoning as the read-test card
+
+  const usable = extracted.filter(e=>e.ok);
+  const skipped = extracted.filter(e=>!e.ok);
+  renderSkipped(skipped);
+
+  if(!usable.length){
+    el('stepMsg').textContent = '';
+    el('findings').innerHTML = `<div class="state-m">None of this client's documents had extractable text — see below for why.</div>`;
+    return;
+  }
+
+  el('stepMsg').textContent = `Extracting terms from ${usable.length} document${usable.length===1?'':'s'} with Claude…`;
+  dlog(`POSTing ${usable.length} document(s) to worker`);
+  try{
+    const res = await fetch(WORKER_URL, {
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body: JSON.stringify({documents: usable.map(u=>({name:u.name, text:u.text}))}),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || `Worker returned ${res.status}`);
+    dlog(`worker returned ${(data.findings||[]).length} finding(s), ${(data.notFound||[]).length} not-found`);
+    el('stepMsg').textContent = '';
+    renderFindings(data.findings || []);
+    renderNotFound(data.notFound || []);
+  }catch(e){
+    el('stepMsg').textContent = '';
+    el('findings').innerHTML = `<div class="state-m">Could not get a summary from the extraction service: ${esc(e.message)}</div>`;
+    dlog(`worker call failed: ${e.message}`);
+  }
 }
 
 function init(){
   if(getParam('demo')==='1') return runDemo();
   register();
   watchdog = setTimeout(()=>{
-    if(!el('stLoading').classList.contains('hide')){ dlog('watchdog: still loading at 25s'); showNoConn(); }
+    if(!el('stLoading').classList.contains('hide')){ dlog('watchdog: still loading at 25s'); showState('stNoConn'); }
   }, 25000);
 }
 
-/* ── demo mode ─────────────────────────────────────────────────────── */
+/* ── demo mode ───────────────────────────────────────────────────── */
 function runDemo(){
   el('stLoading').classList.add('hide');
   el('app').classList.remove('hide');
-  el('hSub').textContent = 'Demo Client Ltd — sample data, not connected to Bullhorn';
-  const box = el('docs');
-  const demo = [
-    {name:'v1.0 Demo Client Gravitas Contract Terms CSigned.pdf', type:'application/pdf',
-     fileSize:496000, status:'text', chars:14200, pages:6,
-     excerpt:'CONTRACT FOR SERVICES\n\nThis Agreement is made between Gravitas Group ("the Agency") '
-       + 'and Demo Client Ltd ("the Client")...\n\n1. INTRODUCTION FEE\n1.1 The Agency\'s fee for the '
-       + 'introduction of a Candidate who is engaged by the Client shall be 18% of the first annual...'},
-    {name:'v1.0 Demo Client Gravitas PAYE Terms CSigned.pdf', type:'application/pdf',
-     fileSize:410000, status:'scan', chars:44, pages:3},
-    {name:'v2.0 Demo Client Gravitas Rebate Schedule CSigned.docx',
-     type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-     fileSize:38000, status:'text', chars:6100, pages:null,
-     excerpt:'REBATE SCHEDULE — SCHEDULE 2\n\nWhere a placed Candidate leaves the Client\'s employment '
-       + 'within the Rebate Period, the Agency shall refund the Client on a sliding scale: 0-4 weeks '
-       + '100%, 5-8 weeks 50%, 9-12 weeks 25%, thereafter nil...'},
-    {name:'Legacy Demo Client Terms 2011.doc', type:'application/msword',
-     fileSize:88000, status:'unsupported-doc'},
+  el('hSub').textContent = 'Demo Client Ltd — sample data, not connected to Bullhorn or the Worker';
+  const findings = [
+    {label:'Introduction fee (permanent placement)', value:'18% of first annual salary',
+     documentName:'v1.0 Demo Client Gravitas Contract Terms CSigned.pdf',
+     sourceQuote:"The Agency's fee for the introduction of a Candidate who is engaged by the Client shall be 18% of the first annual salary."},
+    {label:'Rebate schedule', value:'0-4wk 100%, 5-8wk 50%, 9-12wk 25%, then nil',
+     documentName:'v1.0 Demo Client Gravitas Contract Terms CSigned.pdf',
+     sourceQuote:'Where a placed Candidate leaves the Client's employment within the Rebate Period, the Agency shall refund the Client on a sliding scale: 0-4 weeks 100%, 5-8 weeks 50%, 9-12 weeks 25%, thereafter nil.'},
+    {label:'Payment terms', value:'30 days from invoice date',
+     documentName:'v1.0 Demo Client Gravitas PAYE Terms CSigned.pdf',
+     sourceQuote:'All invoices are payable within 30 days from the date of invoice.'},
   ];
-  demo.forEach(d=>{
-    const card = document.createElement('div');
-    card.className = 'doc';
-    const icon = d.status==='text' ? '✓' : '!';
-    const cls  = d.status==='text' ? 'ok' : 'warn';
-    let body;
-    if(d.status==='text'){
-      const suffix = d.pages ? ` across ${d.pages} pages` : ' from this Word document';
-      body = `<div class="verdict">Real text${d.pages?' layer':''} — ${d.chars.toLocaleString()} `
-        + `characters${suffix}.</div>This document is readable without OCR.`
-        + `<div class="excerpt"><div class="excerpt-lbl">First 500 characters, verbatim</div>`
-        + `${esc(d.excerpt)}</div>`;
-    } else if(d.status==='scan'){
-      body = `<div class="verdict">Little or no extractable text — ${d.chars} characters across `
-        + `${d.pages} pages.</div>This almost certainly means the PDF is a scanned image.`;
-    } else {
-      body = `<div class="verdict">Legacy .doc — not readable client-side.</div>This is the old `
-        + `binary Word format (pre-2007), not the .docx zip/XML format. It would need converting `
-        + `to .docx or PDF first — a format problem, not a scan/OCR problem.`;
-    }
-    card.innerHTML = `<div class="doc-hd"><span class="stat ${cls}">${icon}</span>`
-      + `<span class="doc-name">${esc(d.name)}</span></div>`
-      + `<div class="doc-meta">${esc(d.type)} · ${bytes(d.fileSize)} · added 24/12/2025</div>`
-      + `<div class="doc-body ${d.status!=='text'?'warn':''}">${body}</div>`;
-    box.appendChild(card);
-  });
-  el('summary').innerHTML = `<h2>What this means</h2><p>Sample output only, showing all four cases `
-    + `this card now handles: a PDF with a real text layer, a scanned PDF, a .docx with real text, `
-    + `and a legacy .doc reported as unsupported rather than misread as a scan. `
-    + `Run this for real to see which of these is true for your documents.</p>`;
-  dlog('demo mode — no AppBridge calls made');
+  const notFound = ['Exclusivity/non-solicitation clause', 'Liability or indemnity cap'];
+  renderFindings(findings);
+  renderNotFound(notFound);
+  renderSkipped([{name:'Legacy Demo Client Terms 2011.doc', reason:'Legacy .doc — not readable client-side'}]);
+  dlog('demo mode — no AppBridge or Worker calls made');
 }
 
 window.addEventListener('load', init);
